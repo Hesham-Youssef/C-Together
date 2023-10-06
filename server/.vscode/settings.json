@@ -1,3 +1,12 @@
 {
-    "C_Cpp.errorSquiggles": "disabled"
+    "C_Cpp.errorSquiggles": "disabled",
+    "files.associations": {
+        "*.nasm": "nasm",
+        "*.asm": "asm-collection",
+        "mutex": "c",
+        "new": "c",
+        "streambuf": "c",
+        "functional": "c",
+        "typeinfo": "c"
+    }
 }

@@ -3,11 +3,28 @@
 #include <SDL2/SDL_ttf.h>
 #include <stdbool.h>
 
+#include <stdio.h>
+#include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+
 #define ROWS 6
 #define COLS 7
 #define REALROWS 7
 #define HEIGHT 700
 #define WIDTH 700
+
+
+void* get_state(void* args);
+void* update_state(void* args);
+// void* create_room(void* args);
+void* join_room(void* args);
+
+
+int sockfd;
+struct sockaddr_in server_addr;
+int address_length;
+
 
 int checkWin(char board[REALROWS][COLS], char player) {
     // Check horizontally
@@ -76,7 +93,6 @@ void drawer(SDL_Renderer* renderer, char currentPlayer, SDL_Texture* tableTextur
             SDL_SetRenderDrawColor(renderer, 255*(board[j][i]=='O'), 255*(board[j][i]=='X'), 0, 255);
             SDL_RenderFillRect(renderer, &rect);
         }
-        printf("\n");
     }
 
     SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
@@ -90,11 +106,90 @@ void drawer(SDL_Renderer* renderer, char currentPlayer, SDL_Texture* tableTextur
 }
 
 
-char controller(char board[REALROWS][COLS], char currentPlayer){
+void init_connection(){
+    sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sockfd == -1) {
+        perror("socket");
+        return;
+    }
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(8080);
+    address_length = sizeof(server_addr);
+    server_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+}
+
+
+
+void send_a_msg(char* msg, int msg_len){
+    printf("sending ....\n");
+
+    if(connect(sockfd, (struct sockaddr *)&server_addr , (socklen_t)address_length) < 0) {
+        perror("connect");
+        return;
+    }
+    printf("after connect\n");
+    // write(new_socket, hello, strlen(hello));
+    if (send(sockfd, msg, msg_len, 0) == -1) {
+        perror("send");
+        return;
+    }
+    printf("after send\n");
+
+    char buffer[3000];
+    bzero(buffer, sizeof(buffer));
+
+    read(sockfd, buffer, 3000);
+    printf("%s\n", buffer);
+
+    close(sockfd);
+}
+
+
+
+void* create_room(char board[REALROWS][COLS]){
+    // Use a loop to format the matrix into a string
+    int offset = 0; // Keep track of the current position in the string
+    char matrixString[500];
+
+
+    printf("hello world inside create room %c\n", board[0][0]);
+    for (int i = 0; i < REALROWS; i++) {
+        for (int j = 0; j < COLS; j++) {
+            // Format the matrix element and append it to the string
+            int len = snprintf(matrixString + offset, sizeof(matrixString) - offset, "%d ", board[i][j]);
+            offset += len;
+        }
+        // Add a newline character to separate rows
+        matrixString[offset++] = '\n';
+    }
+
+    // Null-terminate the string
+
+
+    char buffer[600];
+    bzero(buffer, 600);
+    
+    sprintf(buffer, "connect4 create {%s}", matrixString);
+
+    printf("%s\n", buffer);
+
+    send_a_msg(buffer, strlen(buffer));
+
+    return NULL;
+}
+
+
+
+char controller(char board[REALROWS][COLS], char currentPlayer, int count){
     // Find the first empty row in the selected column
     bool done = false;
     int move;
     SDL_Event event;
+    char msg[100];
+    int msg_len = sprintf(msg, "Count is %d", count);
+    printf("%d\n\n", msg_len);
+;
     while(!done){
         SDL_WaitEvent(&event);
         switch(event.type){
@@ -113,6 +208,10 @@ char controller(char board[REALROWS][COLS], char currentPlayer){
                         printf("Invalid column\n");
                         continue;
                     }
+                    msg_len = sprintf(msg, "connect4 create {hello world state i am in {ahhhhh} move is %d}", move);
+                    // send_a_msg(msg, msg_len);
+
+                    printf("%s\n", msg);
                     done = true;
                 }
                 break;
@@ -128,7 +227,7 @@ char controller(char board[REALROWS][COLS], char currentPlayer){
     // Check if the current player has won
     if (checkWin(board, currentPlayer)) {
         printf("Player %c wins!\n", currentPlayer);
-        // return -1*currentPlayer;
+        // return -1*currentPlayer; ////open later
     }
 
     // Check if the board is full (tie game)
@@ -144,7 +243,7 @@ char controller(char board[REALROWS][COLS], char currentPlayer){
 
     if (isFull) {
         printf("It's a tie!\n");
-        // return -2;
+        // return -2;  ////open later
     }
 
     currentPlayer = (currentPlayer == 'X') ? 'O' : 'X';
@@ -204,23 +303,20 @@ int main(){
     SDL_Texture* tableTexture = SDL_CreateTextureFromSurface(renderer, tableSurface);
     SDL_FreeSurface(tableSurface);
 
-    // SDL_Surface* Surface = IMG_Load("assets/table.png");
-    // if (tableSurface == NULL) {
-    //     printf("Image could not be loaded! SDL_Error: %s\n", SDL_GetError());
-    //     return 1;
-    // }
-    // SDL_Texture* tableTexture = SDL_CreateTextureFromSurface(renderer, tableSurface);
-    // SDL_FreeSurface(tableSurface);
-
 
     SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
 
+    init_connection();
+    create_room(board);
+
+    int count = 0;
     while (1) {
         printf("Connect Four\n");
 
         drawer(renderer, currentPlayer, tableTexture, board);
 
-        currentPlayer = controller(board, currentPlayer);
+        currentPlayer = controller(board, currentPlayer, count);
+        count++;
         if(currentPlayer < 0)
             break;
     }

@@ -1,0 +1,8 @@
+{
+    "files.associations": {
+        "*.nasm": "nasm",
+        "*.asm": "asm-collection",
+        "cstdio": "c",
+        "*.tcc": "c"
+    }
+}
