@@ -127,6 +127,59 @@ int create_room(char* app_name, char* buffer, char sa_data[14]){
 }
 
 
+void join_room(char* app_name, char* buffer, char sa_data[14], char* room_number, int socket){
+    char full_path[60];
+    bzero(full_path, 50);
+    sprintf(full_path, "apps/%s/%s", app_name, room_number);
+
+    printf("%s\n", full_path);
+
+    char state_path[80];
+    char clients_path[80];
+    sprintf(state_path, "%s/state", full_path);
+    sprintf(clients_path, "%s/clients", full_path);
+
+    FILE *state_file = fopen(state_path, "r");
+    FILE *clients_file = fopen(clients_path, "wb");
+
+    if (state_file == NULL || clients_file == NULL) {
+        perror("Error opening file");
+        return; // Exit the program with an error code
+    }
+    
+    fwrite(sa_data, 1, 14, clients_file);   
+    // Close the file when done
+    fclose(clients_file);
+
+
+
+    fseek(state_file, 0, SEEK_END);  // Move the file pointer to the end of the file
+    int file_size = ftell(state_file);   // Get the file size
+    rewind(state_file);              // Reset the file pointer to the beginning
+
+
+    char* state = (char *)malloc(file_size + 1);  // +1 for null terminator
+
+    if (state == NULL) {
+        printf("Memory allocation failed.\n");
+        fclose(state_file);
+        return;
+    }
+
+    // Step 4: Read the entire file into memory
+    fread(state, 1, file_size, state_file);
+    state[file_size] = '\0';  // Null-terminate the string
+
+    // Close the file when done
+    fclose(state_file);
+
+
+    write(socket, state, file_size);
+    // return state;
+}
+
+
+
 void* request_handler(void* arg){
     printf("thread started\n");
     thread_args params = *(thread_args*)arg;
@@ -146,17 +199,37 @@ void* request_handler(void* arg){
 
     printf("%s\n", app_name); 
     printf("%s\n", command);
-    char response[50];
-    bzero(response, 50);
+    
 
     if(strncasecmp(command, "create", 6) == 0){
+        char response[50];
+        bzero(response, 50);
         int room_number = create_room(app_name, buffer, params.sockaddr->sa_data);
         sprintf(response, "room_number: %d\n", room_number);
-    }else if(strncasecmp(command, "join", 4) == 0){
-        sprintf(response, "if i were a wealth man aooooiiiii\n");
-    }
+        write(params.socket, response, strlen(response));
 
-    write(params.socket, response, strlen(response));
+    }else if(strncasecmp(command, "join", 4) == 0){
+        // sprintf(response, "if i were a wealth man aooooiiiii\n");
+        char room_number[10];
+        bzero(room_number, 10);
+        sscanf(buffer + strlen(app_name) + strlen(command) + 2, "%s", room_number);
+        printf("%s\n", room_number);
+
+        //don't forget to free
+        join_room(app_name, buffer, params.sockaddr->sa_data, room_number, params.socket);
+
+    }else if(strncasecmp(command, "update", 4) == 0){
+        // sprintf(response, "if i were a wealth man aooooiiiii\n");
+        char room_number[10];
+        bzero(room_number, 10);
+        sscanf(buffer + strlen(app_name) + strlen(command) + 2, "%s", room_number);
+        printf("%s\n", room_number);
+
+        //don't forget to free
+        join_room(app_name, buffer, params.sockaddr->sa_data, room_number, params.socket);
+
+    }
+    
     close(params.socket);
 
 

@@ -18,7 +18,7 @@
 void* get_state(void* args);
 void* update_state(void* args);
 // void* create_room(void* args);
-void* join_room(void* args);
+// void* join_room(void* args);
 
 
 int sockfd;
@@ -121,7 +121,7 @@ void init_connection(){
 
 
 
-void send_a_msg(char* msg, int msg_len){
+void send_a_msg(char* msg, int msg_len, char* reply_buffer){
     printf("sending ....\n");
 
     if(connect(sockfd, (struct sockaddr *)&server_addr , (socklen_t)address_length) < 0) {
@@ -139,10 +139,15 @@ void send_a_msg(char* msg, int msg_len){
     char buffer[3000];
     bzero(buffer, sizeof(buffer));
 
-    read(sockfd, buffer, 3000);
+    int bytes_read = read(sockfd, buffer, 3000);
     printf("%s\n", buffer);
 
     close(sockfd);
+
+    if(reply_buffer == NULL)
+        return;
+    
+    bcopy(buffer, reply_buffer, bytes_read);
 }
 
 
@@ -161,7 +166,6 @@ void* create_room(char board[REALROWS][COLS]){
             offset += len;
         }
         // Add a newline character to separate rows
-        matrixString[offset++] = '\n';
     }
 
     // Null-terminate the string
@@ -169,14 +173,36 @@ void* create_room(char board[REALROWS][COLS]){
 
     char buffer[600];
     bzero(buffer, 600);
-    
     sprintf(buffer, "connect4 create {%s}", matrixString);
-
     printf("%s\n", buffer);
-
-    send_a_msg(buffer, strlen(buffer));
+    send_a_msg(buffer, strlen(buffer), NULL);
 
     return NULL;
+}
+
+
+void* join_room(char board[REALROWS][COLS], char* room_number){
+    char buffer[600];
+    bzero(buffer, 600);
+    sprintf(buffer, "connect4 join %s", room_number);
+    printf("%s\n", buffer);
+    send_a_msg(buffer, strlen(buffer), buffer);
+
+    int row = 0, col = 0;
+    char *token = strtok(buffer, " \n"); // Tokenize using space and newline as delimiters
+    int temp;
+    while (token != NULL && row < 7) {
+        sscanf(token, "%d", &temp);
+        board[row][col] = temp;
+        col++;
+
+        if (col == 7) {
+            col = 0;
+            row++;
+        }
+
+        token = strtok(NULL, " \n");
+    }
 }
 
 
@@ -252,7 +278,7 @@ char controller(char board[REALROWS][COLS], char currentPlayer, int count){
 }
 
 
-int main(){
+int main(int argc, char* argv[]){
     char board[REALROWS][COLS];
     char currentPlayer = 'X';
 
@@ -307,7 +333,10 @@ int main(){
     SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
 
     init_connection();
-    create_room(board);
+    if(argv[1][0] == 'c')
+        create_room(board);
+    else if(argv[1][0] == 'j')
+        join_room(board, argv[2]);
 
     int count = 0;
     while (1) {
