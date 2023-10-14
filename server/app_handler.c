@@ -15,6 +15,8 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 
+#define CONTROLLEN CMSG_LEN(sizeof(int))
+
 // Define a structure for the message
 struct Message {
     long mtype;
@@ -32,15 +34,20 @@ void* room_handler(void* arg){
     // while(argv[i] != NULL)
     //     printf("%s\n", argv[i++]);
 
-    char *response = "hello world from child!"
-                    "\r\n";
+    char response[50];
 
     int client_socket = thread_args->socketfd;
     // Send the HTTP request
     int count = 0;
-    while(count < 60){
+    while(count < 10){
+        snprintf(response,
+            50,
+            "hello world from child! count is %d"
+            "\r\n",
+            count
+        );
         int res = send(client_socket, response, strlen(response), 0);
-        printf("%d\n", res);
+        printf("%d %d\n", res, count);
         sleep(1);
         count++;
     }
@@ -54,57 +61,55 @@ void* room_handler(void* arg){
 
 
 int main(int argc, char** argv) {
-    key_t key;
-    int msgid;
-    struct Message message;
+    printf("hello world inside new child\n");
+    int my_un_socket = atoi(argv[2]);
+    int received_fd;
+    struct msghdr msg;
+    struct iovec iov;
+    char dummy;
+    char fd_buf[CONTROLLEN];
+    struct cmsghdr *cmptr;
 
-    // Generate the same key as the producer
-    key = ftok(argv[1], 'A');
+    iov.iov_base = &dummy;
+    iov.iov_len = 1;
+    msg.msg_iov = &iov;
+    msg.msg_iovlen = 1;
+    msg.msg_name = NULL;
+    msg.msg_namelen = 0;
+    msg.msg_control = fd_buf;
+    msg.msg_controllen = CONTROLLEN;
 
-    // Access the existing message queue
-    msgid = msgget(key, 0666);
-    if (msgid == -1) {
-        perror("msgget");
-        exit(1);
-    }
+    int count = 0;
 
     while(1){
-        // Receive a message from the message queue
-        bzero(message.mtext, 100);
-        if (msgrcv(msgid, &message, sizeof(message.mtext), 0, 0) == -1) {
-            perror("msgrcv");
-            exit(1);
-        }
-        
-        for(int i=0;i<16;i++)
-            printf("%d ", message.mtext[i]);
-        printf("\n");
-
-        // pthread_t thread;
-        Thread_args thread_args;
-
-        int sockfd = socket(AF_UNIX, SOCK_STREAM, 0);
-        if (sockfd == -1) {
-            perror("Socket creation failed");
+        if (recvmsg(my_un_socket, &msg, 0) <= 0) {
+            perror("recvmsg");
             exit(1);
         }
 
-        struct sockaddr addr = {.sa_family=AF_UNIX};
-        memcpy(addr.sa_data, message.mtext, 16);
-
-        if (connect(sockfd, &addr, sizeof(addr)) == -1) {
-            perror("Connection failed");
-            close(sockfd);
+        cmptr = CMSG_FIRSTHDR(&msg);
+        if (cmptr == NULL || cmptr->cmsg_len != CONTROLLEN) {
+            perror("bad control message");
             exit(1);
         }
 
-        char msg[23] = "hello world from child\n";
-        int res = send(sockfd, msg, 23, 0);
-        close(sockfd);
-        // pthread_create(&thread, NULL, room_handler, &thread_args);
+        received_fd = *((int *)CMSG_DATA(cmptr));
+        printf("Child process received file descriptor: %d\n", received_fd);
+
+        char response[50];
+        snprintf(response, 50,"hello world from child count is %d\n", count);
+        // int res = send(received_fd, response, 50, 0);
+        // close(received_fd);
+
+        Thread_args args = {.socketfd=received_fd};
+        pthread_t thread;
+        pthread_create(&thread, NULL, room_handler, &args);
+        count++;
     }
+
+    close(my_un_socket);
     // Remove the message queue
-    msgctl(msgid, IPC_RMID, NULL);
+    // msgctl(msgid, IPC_RMID, NULL);
 
     return 0;
 }
