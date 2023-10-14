@@ -6,298 +6,165 @@
 #include <stdlib.h>
 #include <strings.h>
 #include <sys/stat.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <signal.h>
+#include <sys/msg.h>
+#include <sys/ipc.h>
+#include <stdbool.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+
+// Define a structure to store name-PID mappings
+struct ProcessInfo {
+    pid_t pid;
+    char name[32];
+};
+
+struct Message {
+    long mtype;
+    char mtext[100];
+};
 
 
-typedef struct thread_args
-{
-    struct sockaddr* sockaddr;
-    int socket;
-} thread_args;
+void send_msg_to_app(char* app_name, char* msg, size_t msg_len){
+    key_t key;
+    int msgid;
+    struct Message message;
 
+    key = ftok(app_name, 'A');
+    msgid = msgget(key, 0666 | IPC_CREAT);
+    if (msgid == -1) {
+        perror("msgget");
+        exit(1);
+    }
+    //a bit dangerous because 
+    message.mtype = 1;
+    bzero(message.mtext, 100);
+    memcpy(message.mtext, msg, msg_len);
 
-void check_and_create_directory(const char *path) {
-    struct stat info;
-    if(!(stat(path, &info) == 0)){
-        printf("directory %s doesn't exists\n", path);
-        if (mkdir(path, 0777) != 0) {
-            perror("Error creating directory");
-            exit(1); // Exit with an error code
-        }
+    for(int i=0;i<16;i++)
+        printf("%d=", message.mtext[i]);
+    printf("\n");
+    // Send the message to the queue
+    if (msgsnd(msgid, &message, msg_len, 0) == -1) {
+        perror("msgsnd");
+        exit(1);
     }
 
-    // // printf("%s\n", full_path);
-    // printf("%d\n", full_path==NULL);
-    // if(!full_path!=NULL && !(stat(full_path, &info) == 0)){
-    //     printf("room doesn't exists\n");
-    //     if (mkdir(full_path, 0777) != 0) {
-    //         perror("Error creating directory");
-    //         exit(1); // Exit with an error code
-    //     }
-    // }
-}
 
-int get_rand() {
-    return rand() % 90000 + 10000;
-}
-
-void write_state_to_file(FILE* file, char* buffer){
-    int start = -1;
-    int end = -1;
-    int depth = 0;
-    int i;
-
-    for (i = 0; i < strlen(buffer); i++) {
-        if (buffer[i] == '{') {
-            if (depth == 0) {
-                start = i;
-            }
-            depth++;
-        } else if (buffer[i] == '}') {
-            depth--;
-            if (depth == 0) {
-                end = i;
-                break;
-            }
-        }
-    }
-
-    // Write data to the file
-    fprintf(file, "%.*s\n", end - start - 1, buffer + start + 1);
+    // Remove the message queue
+    // msgctl(msgid, IPC_RMID, NULL);
 }
 
 
-int create_room(char* app_name, char* buffer, char sa_data[14]){
-    char path[50];
-    bzero(path, 50);
-    sprintf(path, "apps/%s", app_name);
-
-    char full_path[60];
-    bzero(full_path, 50);
-    int room_number = get_rand();
-    sprintf(full_path, "%s/%d", path, room_number);
-
-    
-    check_and_create_directory(path);
-    check_and_create_directory(full_path);
-    char state_path[80];
-    char clients_path[80];
-    sprintf(state_path, "%s/state", full_path);
-    sprintf(clients_path, "%s/clients", full_path);
-
-    FILE *state_file = fopen(state_path, "w");
-    FILE *clients_file = fopen(clients_path, "wb");
-
-    if (state_file == NULL || clients_file == NULL) {
-        perror("Error opening file");
-        exit(1); // Exit the program with an error code
-    }
-    
-    fwrite(sa_data, 1, 14, clients_file);
-
-    // for (int i = 0; i < 14; i++) {
-    //     printf("%d ", sa_data[i]);
-    // }
-    // printf("\n");
-    // printf("bytesWritten %ld\n", bytesWritten);    
-        
-    // Close the file when done
-    fclose(clients_file);
-
-    write_state_to_file(state_file, buffer);
-    // Close the file when done
-    fclose(state_file);
 
 
-    // clients_file = fopen(clients_path, "rb");
-    // char testing[14];
-    // bzero(testing, 14);
-    // size_t bytesRead = fread(testing, 1, 14, clients_file);
-
-    // printf("printing testing %ld\n", bytesRead);
-    // for (int i = 0; i < 14; i++) {
-    //     printf("%d ", testing[i]);
-    // }
-    // printf("\n");
-
-    // fclose(clients_file);
-
-
-
-    return room_number;
-}
-
-
-void join_room(char* app_name, char* buffer, char sa_data[14], char* room_number, int socket){
-    char full_path[60];
-    bzero(full_path, 50);
-    sprintf(full_path, "apps/%s/%s", app_name, room_number);
-
-    printf("%s\n", full_path);
-
-    char state_path[80];
-    char clients_path[80];
-    sprintf(state_path, "%s/state", full_path);
-    sprintf(clients_path, "%s/clients", full_path);
-
-    FILE *state_file = fopen(state_path, "r");
-    FILE *clients_file = fopen(clients_path, "wb");
-
-    if (state_file == NULL || clients_file == NULL) {
-        perror("Error opening file");
-        return; // Exit the program with an error code
-    }
-    
-    fwrite(sa_data, 1, 14, clients_file);   
-    // Close the file when done
-    fclose(clients_file);
-
-
-
-    fseek(state_file, 0, SEEK_END);  // Move the file pointer to the end of the file
-    int file_size = ftell(state_file);   // Get the file size
-    rewind(state_file);              // Reset the file pointer to the beginning
-
-
-    char* state = (char *)malloc(file_size + 1);  // +1 for null terminator
-
-    if (state == NULL) {
-        printf("Memory allocation failed.\n");
-        fclose(state_file);
+void create_app_handler(char* app_name){
+    pid_t child_pid;
+    child_pid = fork();
+    if (child_pid == -1) {
+        perror("Fork failed");
         return;
     }
 
-    // Step 4: Read the entire file into memory
-    fread(state, 1, file_size, state_file);
-    state[file_size] = '\0';  // Null-terminate the string
-
-    // Close the file when done
-    fclose(state_file);
-
-
-    write(socket, state, file_size);
-    // return state;
-}
-
-
-
-void* request_handler(void* arg){
-    printf("thread started\n");
-    thread_args params = *(thread_args*)arg;
-
-    int len_read = 0; 
-    char buffer[3000];
-    bzero(buffer, 3000);
-
-    read(params.socket, buffer, 3000);
-    
-    char app_name[50];
-    bzero(app_name, 50);
-    char command[50];
-    bzero(command, 50);
-
-    sscanf(buffer, "%s %s", app_name, command);
-
-    printf("%s\n", app_name); 
-    printf("%s\n", command);
-    
-
-    if(strncasecmp(command, "create", 6) == 0){
-        char response[50];
-        bzero(response, 50);
-        int room_number = create_room(app_name, buffer, params.sockaddr->sa_data);
-        sprintf(response, "room_number: %d\n", room_number);
-        write(params.socket, response, strlen(response));
-
-    }else if(strncasecmp(command, "join", 4) == 0){
-        // sprintf(response, "if i were a wealth man aooooiiiii\n");
-        char room_number[10];
-        bzero(room_number, 10);
-        sscanf(buffer + strlen(app_name) + strlen(command) + 2, "%s", room_number);
-        printf("%s\n", room_number);
-
-        //don't forget to free
-        join_room(app_name, buffer, params.sockaddr->sa_data, room_number, params.socket);
-
-    }else if(strncasecmp(command, "update", 4) == 0){
-        // sprintf(response, "if i were a wealth man aooooiiiii\n");
-        char room_number[10];
-        bzero(room_number, 10);
-        sscanf(buffer + strlen(app_name) + strlen(command) + 2, "%s", room_number);
-        printf("%s\n", room_number);
-
-        //don't forget to free
-        join_room(app_name, buffer, params.sockaddr->sa_data, room_number, params.socket);
-
+    if (child_pid == 0) {
+        // strcpy(processes[0].name, app_name);
+        // processes[0].pid = getpid();
+        char num_str[10];
+        bzero(num_str, 10);
+        // snprintf(num_str, 10, "%d", socketfd);
+        char *args[] = {"./app_handler", app_name, NULL}; 
+        if (execvp("./app_handler", args) == -1) {
+            perror("Exec failed");
+            exit(1);
+        }
+    } else {
+        // close(socketfd);
+        //// handle child exit signal
+        // int status;
+        // wait(&status);
+        // printf("Parent Process: Child exited with status %d\n", WEXITSTATUS(status));
     }
-    
-    close(params.socket);
-
-
-    return NULL;
 }
+
 
 
 void launch(struct Server* server){
-    char buffer[30000];
-    char* hello = "HTTP/1.1 200 OK\n"
-        "Date: Sun, 01 Oct 2023 22:19:57 GMT\n"
-        "Server: Apache/2.2.14 (Win32)\n"
-        "Last-Modified: Wed, 27 Sep 2023 13:55:56 GMT\n"
-        "Content-Length: 88\n"
-        "Content-Type: text/html\n"
-        "Connection: close\n\n"
-
-        "<!DOCTYPE html>"
-        "<body>"
-        "<h1>Hello,World!</h1>"
-        "</body>"
-        "</html>";
-
+    struct ProcessInfo processes[100];
+    char buffer[3000];
     int address_length = sizeof(server->address);
     int count = 0;
+
+    struct sockaddr_un addr;
+    bool process_created = false;
+    char msg[100];
+
+    // // Prepare the socket for passing
+    // struct msghdr msg = {0};
+    // struct iovec iov[1];
+    // char buf[1];
+    // iov[0].iov_base = buf;
+    // iov[0].iov_len = 1;
+
+    // struct cmsghdr *cmsg;
+    // char control[CMSG_SPACE(sizeof(int))];
+    // msg.msg_iov = iov;
+    // msg.msg_iovlen = 1;
+    // msg.msg_control = control;
+    // msg.msg_controllen = sizeof(control);
+
+    // cmsg = CMSG_FIRSTHDR(&msg);
+    // cmsg->cmsg_level = SOL_SOCKET;
+    // cmsg->cmsg_type = SCM_RIGHTS;
+    // cmsg->cmsg_len = CMSG_LEN(sizeof(int));
+
+
     while(1){    
         printf("===== waiting for connection =====\n");
-        
+        bzero(buffer, 3000);
         int new_socket = accept(server->socket, (struct sockaddr*)&server->address, (socklen_t*)&address_length);
+        read(new_socket, buffer, sizeof(buffer));
+        printf("%s\n", buffer);
 
-        pthread_t thread;
-        thread_args args = {.sockaddr=(struct sockaddr*)&server->address, .socket=new_socket};
+        char app_name[32];
+        bzero(app_name, 32);
+        sscanf(buffer, "%s ", app_name);
+        
 
-        if (pthread_create(&thread, NULL, request_handler, &args) != 0) {
-            perror("pthread_create");
-            exit(1);
+        // pid_t target_pid = -1;
+        // for (int i = 0; i < 10; i++) {
+        //     if (strcmp(processes[i].name, app_name) == 0) {
+        //         target_pid = processes[i].pid;
+        //         break;
+        //     }
+        // }
+        bzero(msg, 16);
+        
+
+        for(int i=0;i<16;i++)
+            printf("%d ", (((struct sockaddr*)&server->address)->sa_data)[i]);
+        printf("\n");
+
+        memcpy(msg, ((struct sockaddr*)&server->address)->sa_data, 16);
+
+        send_msg_to_app(app_name, msg, 16);
+
+        if(!process_created){
+            create_app_handler(app_name);
+            process_created = true;
         }
 
-
-        // int sockfd = socket(AF_INET, SOCK_STREAM, 0);
-        // if (sockfd == -1) {
-        //     perror("socket");
-        //     return;
-        // }
-
-
-        // server->address.sin_addr.s_addr = s_addr;
-        // if(connect(sockfd, (struct sockaddr *)&server->address, (socklen_t)address_length) < 0) {
-        //     perror("connect");
-        //     return;
-        // }
-
-        // // write(new_socket, hello, strlen(hello));
-        // char request[] = "GET / HTTP/1.1\r\nHost: example.com\r\n\r\n";
-        // if (send(sockfd, request, strlen(request), 0) == -1) {
-        //     perror("send");
-        //     return;
-        // }
-        // close(sockfd);
-        
+        // close(new_socket);
     }
 }
 
 
 int main(){
     srand(time(NULL));
-    check_and_create_directory("apps");
+    // send_msg_to_app("connect4", "resputian\n");
     struct Server server = server_constructor(AF_INET, SOCK_STREAM, 0,
         INADDR_ANY, 8080, 10, launch);
     server.launch(&server);
+    return 0;
 }
