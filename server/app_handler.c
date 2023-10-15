@@ -29,7 +29,7 @@ struct Message {
 typedef struct Thread_args {
     int socketfd;
     Queue* queue;
-    pthread_mutex_t* mutex;
+    pthread_mutex_t mutex;
 }Thread_args;
 
 
@@ -42,10 +42,10 @@ void* room_handler(void* arg){
 
     char response[50];
     int client_socket = -1;
-    pthread_mutex_lock(thread_args->mutex);
+    pthread_mutex_lock(&thread_args->mutex);
     if(!isEmpty(thread_args->queue))
         client_socket = dequeue(thread_args->queue);
-    pthread_mutex_unlock(thread_args->mutex);
+    pthread_mutex_unlock(&thread_args->mutex);
 
     // int client_socket = thread_args->socketfd;
     // Send the HTTP request
@@ -115,11 +115,11 @@ int main(int argc, char** argv) {
         // close(received_fd);
 
         Thread_args args = {.socketfd=received_fd, .queue=createQueue()};
-        pthread_mutex_init(args.mutex, NULL);
+        pthread_mutex_init(&args.mutex, NULL);
 
-        pthread_mutex_lock(args.mutex);
+        pthread_mutex_lock(&args.mutex);
         enqueue(args.queue, received_fd);
-        pthread_mutex_unlock(args.mutex);
+        pthread_mutex_unlock(&args.mutex);
 
         pthread_t thread;
         pthread_create(&thread, NULL, room_handler, &args);
