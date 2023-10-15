@@ -118,7 +118,7 @@ void launch(struct Server* server){
 
     struct msghdr msg;
     struct iovec iov;
-    char dummy = 'D';
+    char dummy = 'C'; ////use this to send to app_handler whether we join or create
     char control[CONTROLLEN];
     struct cmsghdr *cmptr;
 

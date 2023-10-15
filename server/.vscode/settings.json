@@ -12,6 +12,12 @@
         "wait.h": "c",
         "ipc.h": "c",
         "system_error": "c",
-        "chrono": "c"
+        "chrono": "c",
+        "array": "c",
+        "deque": "c",
+        "forward_list": "c",
+        "list": "c",
+        "vector": "c",
+        "string_view": "c"
     }
 }

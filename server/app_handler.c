@@ -1,5 +1,4 @@
 #include <stdio.h>
-#include "Server.h"
 #include <string.h>
 #include <unistd.h>
 #include <pthread.h>
@@ -15,7 +14,11 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 
+#include "Server.h"
+#include "Queue.h"
 #define CONTROLLEN CMSG_LEN(sizeof(int))
+
+typedef struct Queue Queue;
 
 // Define a structure for the message
 struct Message {
@@ -25,9 +28,12 @@ struct Message {
 
 typedef struct Thread_args {
     int socketfd;
+    Queue* queue;
+    pthread_mutex_t* mutex;
 }Thread_args;
 
 
+///////////// next implement the room loop
 void* room_handler(void* arg){
     Thread_args* thread_args = (Thread_args*)arg;
     // int i = 0;
@@ -35,15 +41,22 @@ void* room_handler(void* arg){
     //     printf("%s\n", argv[i++]);
 
     char response[50];
+    int client_socket = -1;
+    pthread_mutex_lock(thread_args->mutex);
+    if(!isEmpty(thread_args->queue))
+        client_socket = dequeue(thread_args->queue);
+    pthread_mutex_unlock(thread_args->mutex);
 
-    int client_socket = thread_args->socketfd;
+    // int client_socket = thread_args->socketfd;
     // Send the HTTP request
     int count = 0;
+    pthread_t thread_id = pthread_self();
     while(count < 10){
         snprintf(response,
             50,
-            "hello world from child! count is %d"
+            "hello world from %lu ! count is %d"
             "\r\n",
+            thread_id,
             count
         );
         int res = send(client_socket, response, strlen(response), 0);
@@ -96,12 +109,18 @@ int main(int argc, char** argv) {
         received_fd = *((int *)CMSG_DATA(cmptr));
         printf("Child process received file descriptor: %d\n", received_fd);
 
-        char response[50];
-        snprintf(response, 50,"hello world from child count is %d\n", count);
+        // char response[50];
+        // snprintf(response, 50,"hello world from child count is %d\n", count);
         // int res = send(received_fd, response, 50, 0);
         // close(received_fd);
 
-        Thread_args args = {.socketfd=received_fd};
+        Thread_args args = {.socketfd=received_fd, .queue=createQueue()};
+        pthread_mutex_init(args.mutex, NULL);
+
+        pthread_mutex_lock(args.mutex);
+        enqueue(args.queue, received_fd);
+        pthread_mutex_unlock(args.mutex);
+
         pthread_t thread;
         pthread_create(&thread, NULL, room_handler, &args);
         count++;
