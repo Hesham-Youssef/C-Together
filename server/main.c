@@ -50,7 +50,7 @@ void send_msg_to_app(int socketfd, struct msghdr* msg){
     //     perror("msgsnd");
     //     exit(1);
     // }
-    printf("hello world inside send msg\n");
+    // printf("hello world inside send msg\n");
 
     if (sendmsg(socketfd, msg, MSG_NOSIGNAL) != 1) {
         perror("sendmsg");
@@ -65,7 +65,7 @@ void send_msg_to_app(int socketfd, struct msghdr* msg){
 
 
 int create_app_handler(char* app_name){
-    printf("hello world inside create\n");
+    // printf("hello world inside create\n");
     int sockfd[2];
     if (socketpair(AF_UNIX, SOCK_STREAM, 0, sockfd) < 0) {
         perror("socketpair");
@@ -137,14 +137,20 @@ void launch(struct Server* server){
     cmptr->cmsg_type = SCM_RIGHTS;
 
     int un_socket = -1;
-
+    int offset;
     while(1){    
         printf("===== waiting for connection =====\n");
         bzero(buffer, 3000);
         int new_socket = accept(server->socket, (struct sockaddr*)&server->address, (socklen_t*)&address_length);
-        read(new_socket, buffer, sizeof(buffer));
-        printf("%s\n", buffer);
 
+        offset = 0;
+        while((offset < 50)){
+            read(new_socket, buffer+offset, 1);
+            printf("%c %d %d\n", buffer[offset], buffer[offset], offset);
+            if(buffer[offset] == ' ')
+                break;
+            offset++;
+        }
         char app_name[32];
         bzero(app_name, 32);
         sscanf(buffer, "%s ", app_name);
@@ -168,7 +174,7 @@ void launch(struct Server* server){
         *((int *)CMSG_DATA(cmptr)) = new_socket;
         send_msg_to_app(un_socket, &msg);
 
-        printf("hello world after send msg\n");
+        // printf("hello world after send msg\n");
 
         // close(new_socket);
     }

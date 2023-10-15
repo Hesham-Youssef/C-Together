@@ -51,7 +51,11 @@ void* room_handler(void* arg){
     // Send the HTTP request
     int count = 0;
     pthread_t thread_id = pthread_self();
-    while(count < 10){
+    char buffer[3000];
+    bzero(buffer, 3000);
+    read(client_socket, buffer, 3000);
+    printf("%s\n", buffer);
+    while(count < 1){
         snprintf(response,
             50,
             "hello world from %lu ! count is %d"
@@ -60,8 +64,8 @@ void* room_handler(void* arg){
             count
         );
         int res = send(client_socket, response, strlen(response), 0);
-        printf("%d %d\n", res, count);
-        sleep(1);
+        // printf("%d %d\n", res, count);
+        // sleep(1);
         count++;
     }
 
