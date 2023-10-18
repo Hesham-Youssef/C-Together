@@ -18,6 +18,11 @@
         "forward_list": "c",
         "list": "c",
         "vector": "c",
-        "string_view": "c"
+        "string_view": "c",
+        "string": "c",
+        "unordered_map": "c",
+        "unordered_set": "c",
+        "initializer_list": "c",
+        "random": "c"
     }
 }
