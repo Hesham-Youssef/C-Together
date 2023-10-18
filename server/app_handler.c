@@ -114,7 +114,9 @@ int main(int argc, char** argv) {
     int count = 0;
     bool created = false;
 
-    Node* head = NULL;
+    // Node* head = NULL;
+
+    Thread_args* targeted_room = NULL;
 
     while(1){
         if (recvmsg(my_un_socket, &msg, 0) <= 0) {
@@ -143,24 +145,27 @@ int main(int argc, char** argv) {
             
             and also reading the rest of the arguments in the clients request
         */
-        
-
-        pthread_mutex_lock(&args.mutex);
-        enqueue(args.queue, received_fd);
-        pthread_mutex_unlock(&args.mutex);
 
         if(!created){
-            // Thread_args args = {.queue=createQueue()};
-            // pthread_mutex_init(&args.mutex, NULL);
-            // printf("creating thread\n");
-            // pthread_t thread;
-            // pthread_create(&thread, NULL, room_handler, &args);
-            // created = true;
+            Thread_args args = {.queue=createQueue()};
+            pthread_mutex_init(&args.mutex, NULL);
+            printf("creating thread\n");
+            pthread_t thread;
+            pthread_create(&thread, NULL, room_handler, &args);
+            created = true;
+            targeted_room = &args;
             // int room_number = rand() % 9000 + 1000;
             // printf("room number: %d\n", room_number);
             // Room room = {.args=args, .room_number=room_number};
             // append(head, &room);
         }
+
+        if(targeted_room != NULL){
+            pthread_mutex_lock(&targeted_room->mutex);
+            enqueue(targeted_room->queue, received_fd);
+            pthread_mutex_unlock(&targeted_room->mutex);
+        }
+        
         count++;
     }
 

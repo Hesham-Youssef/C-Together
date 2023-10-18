@@ -146,7 +146,7 @@ void launch(struct Server* server){
         offset = 0;
         while((offset < 50)){
             read(new_socket, buffer+offset, 1);
-            printf("%c %d %d\n", buffer[offset], buffer[offset], offset);
+            // printf("%c %d %d\n", buffer[offset], buffer[offset], offset);
             if(buffer[offset] == ' ')
                 break;
             offset++;
