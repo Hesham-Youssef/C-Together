@@ -14,6 +14,7 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <stdbool.h>
+#include <fcntl.h>
 
 // #include "LinkedList.h"
 #include "Server.h"
@@ -53,8 +54,18 @@ Node* search(Node* head, int target) {
 }
 
 void readNextArg(int sockfd, char buff[]){
+    int flags = fcntl(sockfd, F_GETFL, 0);
+    if (flags == -1) {
+        perror("fcntl");
+        exit(1);
+    }
+    if (fcntl(sockfd, F_SETFL, flags | O_NONBLOCK) == -1) {
+        perror("fcntl");
+        exit(1);
+    }
+
     int offset = 0, bytes_read;
-    while((offset < 50)){
+    while((offset < 50 && bytes_read != -1)){
         bytes_read = recv(sockfd, buff+offset, 1, 0);
         // printf("%c %d %d\n", buffer[offset], buffer[offset], offset);
         if(buff[offset] == 32){
@@ -62,6 +73,17 @@ void readNextArg(int sockfd, char buff[]){
             break;
         }
         offset++;
+    }
+
+
+    if (flags == -1) {
+        perror("fcntl");
+        exit(1);
+    }
+    flags ^= O_NONBLOCK;
+    if (fcntl(sockfd, F_SETFL, flags | 0) == -1) {
+        perror("fcntl");
+        exit(1);
     }
 
     printf("done reading %s\n", buff);
@@ -91,11 +113,11 @@ void* room_handler(void* arg){
     while(count < 50){
         pthread_mutex_lock(&thread_args->mutex);
         while(!is_empty(thread_args->queue)){
-            printf("hello world from room %lu | count is %d\n", thread_id, count);
+            printf("hello world from room %lu \n", thread_id);
             client_socket = *((int*)(pop(&thread_args->queue)));
             clients[index++] = client_socket;
             printf("%d joined room\n", client_socket);
-            // bzero(buffer, 3000);
+            bzero(buffer, 3000);
             // read(client_socket, buffer, 3000);
             count = 0;
         }
