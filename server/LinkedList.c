@@ -1,7 +1,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#include "LinkedList.h"
+// Define a doubly linked list node structure
+typedef struct Node {
+    void* data;
+    struct Node* next;
+    struct Node* prev; // Add a 'prev' pointer for the previous node
+} Node;
 
 // Function to create a new node
 Node* createNode(void* data) {
@@ -9,6 +14,7 @@ Node* createNode(void* data) {
     if (newNode) {
         newNode->data = data;
         newNode->next = NULL;
+        newNode->prev = NULL;
     }
     return newNode;
 }
@@ -29,27 +35,47 @@ void append(Node** head, void* data) {
             current = current->next;
         }
         current->next = newNode;
+        newNode->prev = current;
     }
 }
 
+// Function to remove a specific node from the list
+void removeNode(Node** head, Node* node) {
+    if (*head == NULL || node == NULL) {
+        return; // Nothing to remove
+    }
 
-// Function to remove an element from the list
-void removeElement(Node** head, void* target) {
+    if (node->prev == NULL) {
+        *head = node->next;
+    } else {
+        node->prev->next = node->next;
+    }
+
+    if (node->next != NULL) {
+        node->next->prev = node->prev;
+    }
+
+    free(node);
+}
+
+// Function to remove an element from the list using room number
+void removeElement(Node** head, int target) {
     Node* current = *head;
-    Node* prev = NULL;
 
     while (current != NULL) {
-        if (current->data == target) {
-            if (prev == NULL) {
+        if (*((int*)(current->data)) == target) {
+            if (current->prev == NULL) {
                 *head = current->next;
             } else {
-                prev->next = current->next;
+                current->prev->next = current->next;
+            }
+            if (current->next != NULL) {
+                current->next->prev = current->prev;
             }
             free(current);
             return; // Element removed
         }
 
-        prev = current;
         current = current->next;
     }
 }
@@ -62,6 +88,9 @@ void* pop(Node** head) {
 
     Node* current = *head;
     *head = current->next;
+    if (*head != NULL) {
+        (*head)->prev = NULL;
+    }
     void* data = current->data;
     free(current);
     return data;
@@ -76,7 +105,7 @@ int is_empty(Node* head) {
 void printList(Node* head) {
     Node* current = head;
     while (current != NULL) {
-        printf("%p -> ", current->data);
+        printf("%p <-> ", current->data);
         current = current->next;
     }
     printf("NULL\n");
@@ -90,4 +119,16 @@ void freeList(Node* head) {
         current = current->next;
         free(temp);
     }
+}
+
+// Function to search for an element in the list using room number
+Node* search(Node* head, int target) {
+    Node* current = head;
+    while (current != NULL) {
+        if (*((int*)(current->data)) == target) {
+            return current;
+        }
+        current = current->next;
+    }
+    return NULL; // Element not found
 }

@@ -15,14 +15,19 @@
 #include <sys/un.h>
 #include <stdbool.h>
 #include <fcntl.h>
+#include <poll.h>
 
 // #include "LinkedList.h"
 #include "Server.h"
 #include "LinkedList.h"
 
 #define CONTROLLEN CMSG_LEN(sizeof(int))
+#define TIMEOUT 500
 
 typedef struct Queue Queue;
+
+Node* rooms = NULL;
+pthread_mutex_t rooms_mutex;
 
 // Define a structure for the message
 struct Message {
@@ -30,28 +35,12 @@ struct Message {
     char mtext[100];
 };
 
-typedef struct Thread_args {
+typedef struct Thread_args { //don't change params order
+    int room_num;
     Node* queue;
     pthread_mutex_t mutex;
 }Thread_args;
 
-
-typedef struct Room {
-    int room_num;
-    Thread_args* args;
-}Room;
-
-// Function to search for an element in the list
-Node* search(Node* head, int target) {
-    Node* current = head;
-    while (current != NULL) {
-        if (((Room*)(current->data))->room_num == target) {
-            return current;
-        }
-        current = current->next;
-    }
-    return NULL; // Element not found
-}
 
 void readNextArg(int sockfd, char buff[]){
     int flags = fcntl(sockfd, F_GETFL, 0);
@@ -91,37 +80,54 @@ void readNextArg(int sockfd, char buff[]){
 }
 
 
+void room_exit_handler(void* arg) {
+    // This function is called when the thread exits
+    printf("Thread cleanup: Exiting... room %d\n", *((int*)arg));
+    pthread_mutex_lock(&rooms_mutex);
+    removeElement(&rooms, *((int*)arg));
+    printList(rooms);
+    pthread_mutex_unlock(&rooms_mutex);
+}
+
+
+
+
 ///////////// next implement the room loop
 void* room_handler(void* arg){
     Thread_args* thread_args = (Thread_args*)arg;
-    // int i = 0;
-    // while(argv[i] != NULL)
-    //     printf("%s\n", argv[i++]);
+
+    pthread_cleanup_push(room_exit_handler, &thread_args->room_num);
 
     char response[50];
     int client_socket = -1;
 
-    // int client_socket = thread_args->socketfd;
-    // Send the HTTP request
     int count = 0;
     pthread_t thread_id = pthread_self();
     char buffer[3000];
     
-    int clients[10] = {0};
-    int index = 0;
+    Node* clients = NULL;
+    Node* curr = NULL;
+    Node* next = NULL;
 
-    while(count < 50){
-        pthread_mutex_lock(&thread_args->mutex);
-        while(!is_empty(thread_args->queue)){
-            printf("hello world from room %lu \n", thread_id);
+    unsigned long temp = 0;
+
+    do{
+        while(1){
+            pthread_mutex_lock(&thread_args->mutex);
+            if(is_empty(thread_args->queue)){
+                pthread_mutex_unlock(&thread_args->mutex);
+                break;
+            }
             client_socket = *((int*)(pop(&thread_args->queue)));
-            clients[index++] = client_socket;
+            pthread_mutex_unlock(&thread_args->mutex);
+
+            printf("hello world from room %lu \n", thread_id);
+
+            temp = client_socket;
+            append(&clients, (void*)temp);
             printf("%d joined room\n", client_socket);
-            bzero(buffer, 3000);
-            // read(client_socket, buffer, 3000);
             count = 0;
         }
-        pthread_mutex_unlock(&thread_args->mutex);
 
         snprintf(response,
             50,
@@ -130,16 +136,38 @@ void* room_handler(void* arg){
             thread_id,
             count
         );
-
-        for(int i=0;i<index;i++)
-            send(clients[i], response, strlen(response), 0);
+        
+        curr = clients;
+        while(curr != NULL){
+            client_socket = (int)((unsigned long)(curr->data));
+            int bytes_written = send(client_socket, response, strlen(response), 0);
+            if(bytes_written == -1){
+                printf("deleting %d\n", client_socket);
+                next = curr->next;
+                removeNode(&clients, curr);
+                close(client_socket);
+                curr = next;
+                continue;
+            }
+            curr = curr->next;
+        }
+        
         // printf("%d %d\n", res, count);
+        // printList(clients);
         sleep(1);
         count++;
+    }while(clients != NULL);
+
+    curr = clients;
+    while(curr != NULL){
+        close((int)((unsigned long)(curr->data)));
+        next = curr->next;
+        removeNode(&clients, curr);
+        curr = next;
     }
 
-    for(int i=0;i<index;i++)
-        close(clients[i]);
+    pthread_cleanup_pop(1);
+    pthread_exit(NULL);
 }
 
 
@@ -150,6 +178,8 @@ void* room_handler(void* arg){
 int main(int argc, char** argv) {
     srand(time(NULL));
     close(atoi(argv[3]));
+
+    pthread_mutex_init(&rooms_mutex, NULL);
 
     printf("hello world inside new child\n");
 
@@ -174,7 +204,7 @@ int main(int argc, char** argv) {
     int count = 0;
     bool created = false;
 
-    Node* rooms = NULL;
+    
     // Thread_args* targeted_room = NULL;
 
     char command[50];
@@ -227,23 +257,27 @@ int main(int argc, char** argv) {
                 // targeted_room = &args;
                 int room_number = rand() % 9000 + 1000;
                 printf("room number: %d\n", room_number);
-                Room room = {.args=&args, .room_num=room_number};
-                append(&rooms, &room);
+                args.room_num = room_number;
+                pthread_mutex_lock(&rooms_mutex);
+                append(&rooms, &args);
+                pthread_mutex_unlock(&rooms_mutex);
                 break;
 
             case 'j':
                 printf("adding you\n");
                 readNextArg(received_fd, room_number_str);
+                pthread_mutex_lock(&rooms_mutex);
                 Node* targeted_room = search(rooms, atoi(room_number_str));
+                pthread_mutex_unlock(&rooms_mutex);
                 if(targeted_room == NULL){
                     printf("Room not found\n");
                     send(received_fd, "Room not found\n", 16, 0);
                     close(received_fd);
                     break;
                 }
-                pthread_mutex_lock(&((Room*)(targeted_room->data))->args->mutex);
-                append(&((Room*)(targeted_room->data))->args->queue, &received_fd);
-                pthread_mutex_unlock(&((Room*)(targeted_room->data))->args->mutex);
+                pthread_mutex_lock(&((Thread_args*)(targeted_room->data))->mutex);
+                append(&((Thread_args*)(targeted_room->data))->queue, &received_fd);
+                pthread_mutex_unlock(&((Thread_args*)(targeted_room->data))->mutex);
             
         
                 break;

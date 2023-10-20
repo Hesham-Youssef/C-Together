@@ -3,10 +3,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-// Define the structure of a singly linked list node
+// Define a doubly linked list node structure
 typedef struct Node {
     void* data;
     struct Node* next;
+    struct Node* prev; // Add a 'prev' pointer for the previous node
 } Node;
 
 
@@ -14,10 +15,13 @@ typedef struct Node {
 void append(Node** head, void* data);
 
 // Function to search for an element in the list
-// Node* search(Node* head, void* target);
+Node* search(Node* head, int target);
 
 // Function to remove an element from the list
-void removeElement(Node** head, void* target);
+void removeElement(Node** head, int target);
+
+// Function to remove an element from the list
+void removeNode(Node** head, Node* node);
 
 // Function to print the elements of the list
 void printList(Node* head);
