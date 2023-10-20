@@ -64,7 +64,7 @@ void send_msg_to_app(int socketfd, struct msghdr* msg){
 
 
 
-int create_app_handler(char* app_name){
+int create_app_handler(char* app_name, int client_sockfd){
     // printf("hello world inside create\n");
     int sockfd[2];
     if (socketpair(AF_UNIX, SOCK_STREAM, 0, sockfd) < 0) {
@@ -87,7 +87,11 @@ int create_app_handler(char* app_name){
         char sockfd_str[10];
         bzero(sockfd_str, 10);
         snprintf(sockfd_str, 10, "%d", sockfd[1]);
-        char *args[] = {"./app_handler", app_name, sockfd_str, NULL}; 
+
+        char client_sockfd_str[10];
+        bzero(client_sockfd_str, 10);
+        snprintf(client_sockfd_str, 10, "%d", client_sockfd);
+        char *args[] = {"./app_handler", app_name, sockfd_str, client_sockfd_str, NULL}; 
         if (execvp("./app_handler", args) == -1) {
             perror("Exec failed");
             exit(1);
@@ -138,23 +142,24 @@ void launch(struct Server* server){
 
     int un_socket = -1;
     int offset;
+    char app_name[32];
     while(1){    
         printf("===== waiting for connection =====\n");
         bzero(buffer, 3000);
         int new_socket = accept(server->socket, (struct sockaddr*)&server->address, (socklen_t*)&address_length);
 
         offset = 0;
+        bzero(app_name, 32);
         while((offset < 50)){
-            read(new_socket, buffer+offset, 1);
+            read(new_socket, app_name+offset, 1);
             // printf("%c %d %d\n", buffer[offset], buffer[offset], offset);
-            if(buffer[offset] == ' ')
+            if(app_name[offset] == ' '){
+                app_name[offset] = 0;
                 break;
+            }
             offset++;
         }
-        char app_name[32];
-        bzero(app_name, 32);
-        sscanf(buffer, "%s ", app_name);
-        
+        printf("%s\n", app_name);
 
         // pid_t target_pid = -1;
         // for (int i = 0; i < 10; i++) {
@@ -167,7 +172,7 @@ void launch(struct Server* server){
         // memcpy(app_msg, ((struct sockaddr*)&server->address)->sa_data, 16);
 
         if(!process_created){
-            un_socket = create_app_handler(app_name);
+            un_socket = create_app_handler(app_name, new_socket);
             process_created = true;
         }
 
@@ -176,7 +181,7 @@ void launch(struct Server* server){
 
         // printf("hello world after send msg\n");
 
-        // close(new_socket);
+        close(new_socket);
     }
 }
 

@@ -32,17 +32,6 @@ void append(Node** head, void* data) {
     }
 }
 
-// Function to search for an element in the list
-Node* search(Node* head, void* target) {
-    Node* current = head;
-    while (current != NULL) {
-        if (current->data == target) {
-            return current;
-        }
-        current = current->next;
-    }
-    return NULL; // Element not found
-}
 
 // Function to remove an element from the list
 void removeElement(Node** head, void* target) {
@@ -65,6 +54,24 @@ void removeElement(Node** head, void* target) {
     }
 }
 
+// Function to pop the first element from the list
+void* pop(Node** head) {
+    if (*head == NULL) {
+        return NULL; // List is empty
+    }
+
+    Node* current = *head;
+    *head = current->next;
+    void* data = current->data;
+    free(current);
+    return data;
+}
+
+// Function to check if the list is empty
+int is_empty(Node* head) {
+    return head == NULL;
+}
+
 // Function to print the elements of the list
 void printList(Node* head) {
     Node* current = head;
@@ -84,4 +91,3 @@ void freeList(Node* head) {
         free(temp);
     }
 }
-

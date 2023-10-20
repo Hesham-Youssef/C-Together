@@ -9,14 +9,12 @@ typedef struct Node {
     struct Node* next;
 } Node;
 
-// Function to create a new node
-Node* createNode(void* data);
 
 // Function to add a new element at the end of the list
 void append(Node** head, void* data);
 
 // Function to search for an element in the list
-Node* search(Node* head, void* target);
+// Node* search(Node* head, void* target);
 
 // Function to remove an element from the list
 void removeElement(Node** head, void* target);
@@ -27,6 +25,11 @@ void printList(Node* head);
 // Function to free the memory of the list
 void freeList(Node* head);
 
+// Function to pop the first element from the list
+void* pop(Node** head);
+
+// Function to check if the list is empty
+int is_empty(Node* head);
 
 #endif
 
