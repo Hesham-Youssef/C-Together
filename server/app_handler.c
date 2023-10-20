@@ -41,8 +41,7 @@ typedef struct Thread_args { //don't change params order
     pthread_mutex_t mutex;
 }Thread_args;
 
-
-void readNextArg(int sockfd, char buff[]){
+void makeSockNonBlocking(int sockfd){
     int flags = fcntl(sockfd, F_GETFL, 0);
     if (flags == -1) {
         perror("fcntl");
@@ -52,7 +51,23 @@ void readNextArg(int sockfd, char buff[]){
         perror("fcntl");
         exit(1);
     }
+}
 
+void makeSockBlocking(int sockfd){
+    int flags = fcntl(sockfd, F_GETFL, 0);
+    if (flags == -1) {
+        perror("fcntl");
+        exit(1);
+    }
+    flags ^= O_NONBLOCK;
+    if (fcntl(sockfd, F_SETFL, flags | 0) == -1) {
+        perror("fcntl");
+        exit(1);
+    }
+}
+
+
+void readNextArg(int sockfd, char buff[]){
     int offset = 0, bytes_read;
     while((offset < 50 && bytes_read != -1)){
         bytes_read = recv(sockfd, buff+offset, 1, 0);
@@ -63,20 +78,7 @@ void readNextArg(int sockfd, char buff[]){
         }
         offset++;
     }
-
-
-    if (flags == -1) {
-        perror("fcntl");
-        exit(1);
-    }
-    flags ^= O_NONBLOCK;
-    if (fcntl(sockfd, F_SETFL, flags | 0) == -1) {
-        perror("fcntl");
-        exit(1);
-    }
-
     printf("done reading %s\n", buff);
-
 }
 
 
@@ -90,6 +92,25 @@ void room_exit_handler(void* arg) {
 }
 
 
+void forward_to_clients(Node* clients, char* buff){
+    Node* curr = clients;
+    Node* next = NULL;
+    int client_socket;
+    while(curr != NULL){
+        client_socket = (int)((unsigned long)(curr->data));
+        int bytes_written = send(client_socket, buff, strlen(buff), 0);
+        if(bytes_written == -1){
+            printf("deleting %d\n", client_socket);
+            next = curr->next;
+            removeNode(&clients, curr);
+            close(client_socket);
+            curr = next;
+            continue;
+        }
+        curr = curr->next;
+    }
+}
+
 
 
 ///////////// next implement the room loop
@@ -101,15 +122,20 @@ void* room_handler(void* arg){
     char response[50];
     int client_socket = -1;
 
+    int room_mode = 1;
+
     int count = 0;
     pthread_t thread_id = pthread_self();
-    char buffer[3000];
+    char buffer[5000];
     
     Node* clients = NULL;
     Node* curr = NULL;
     Node* next = NULL;
+    Node* toCurr = NULL;
 
     unsigned long temp = 0;
+
+    int bytes_read;
 
     do{
         while(1){
@@ -137,16 +163,14 @@ void* room_handler(void* arg){
         );
         
         curr = clients;
+        
         while(curr != NULL){
             client_socket = (int)((unsigned long)(curr->data));
-            int bytes_written = send(client_socket, response, strlen(response), 0);
-            if(bytes_written == -1){
-                printf("deleting %d\n", client_socket);
-                next = curr->next;
-                removeNode(&clients, curr);
-                close(client_socket);
-                curr = next;
-                continue;
+            bzero(buffer, sizeof(buffer));
+            bytes_read = recv(client_socket, buffer, sizeof(buffer), 0);
+            printf("checking sock %d\nbytes read:%d\n", client_socket, bytes_read);
+            if(bytes_read > 0){
+                forward_to_clients(clients, buffer);
             }
             curr = curr->next;
         }
@@ -225,6 +249,7 @@ int main(int argc, char** argv) {
 
         received_fd = *((int *)CMSG_DATA(cmptr));
 
+        makeSockNonBlocking(received_fd);
         readNextArg(received_fd, command);
 
         
