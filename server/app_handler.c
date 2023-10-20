@@ -125,7 +125,6 @@ void* room_handler(void* arg){
 
             temp = client_socket;
             append(&clients, (void*)temp);
-            printf("%d joined room\n", client_socket);
             count = 0;
         }
 
@@ -152,8 +151,6 @@ void* room_handler(void* arg){
             curr = curr->next;
         }
         
-        // printf("%d %d\n", res, count);
-        // printList(clients);
         sleep(1);
         count++;
     }while(clients != NULL);
@@ -214,7 +211,7 @@ int main(int argc, char** argv) {
     bzero(room_number_str, 10);
 
     int offset = 0;
-    while(1){
+    do{
         if (recvmsg(my_un_socket, &msg, 0) <= 0) {
             perror("recvmsg");
             exit(1);
@@ -230,22 +227,9 @@ int main(int argc, char** argv) {
 
         readNextArg(received_fd, command);
 
-        printf("%s =========\n", command);
-        // char response[50];
-        // snprintf(response, 50,"hello world from child count is %d\n", count);
-        // int res = send(received_fd, response, 50, 0);
-        // close(received_fd);
+        
 
-        /*
-            have to implement the following
-            if(room found)
-                get the mutex and queue of it
-                puush into queue
-            
-            and also reading the rest of the arguments in the clients request
-        */
-
-       switch (command[0]){
+        switch (command[0]){
             case 'c':
                 Thread_args args = {.queue=NULL};
                 append(&args.queue, &received_fd);
@@ -262,7 +246,6 @@ int main(int argc, char** argv) {
                 append(&rooms, &args);
                 pthread_mutex_unlock(&rooms_mutex);
                 break;
-
             case 'j':
                 printf("adding you\n");
                 readNextArg(received_fd, room_number_str);
@@ -281,18 +264,18 @@ int main(int argc, char** argv) {
             
         
                 break;
-
             default:
                 break;
-       }
-
+        }
 
         count++;
-    }
+    }while(rooms != NULL);
 
     close(my_un_socket);
     // Remove the message queue
     // msgctl(msgid, IPC_RMID, NULL);
+
+    printf("exiting app handler %s\n", argv[1]);
 
     return 0;
 }
