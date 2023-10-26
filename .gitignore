@@ -2,3 +2,5 @@ server/test.c
 server/test
 server/ahh.py
 server/a.out
+server/pub.c
+server/pub

@@ -26,13 +26,63 @@ struct sockaddr_in server_addr;
 int address_length;
 char current_player;
 // drawer(renderer, current_player, tableTexture, board);
-typedef struct ThreadArgs {
-    char** board;
-    char* room_number;
-    SDL_Renderer* renderer;
-    SDL_Texture* tableTexture;
+
+
+void init_connection(int client_socket){
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(8080);
+    address_length = sizeof(server_addr);
+    server_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
     
-}ThreadArgs;
+    if (connect(client_socket, (struct sockaddr *)&server_addr, sizeof(server_addr)) == -1) {
+        perror("Error connecting to server");
+        close(client_socket);
+        exit(1);
+    }
+}
+
+int init_sdl(SDL_Window** window, SDL_Renderer** renderer, SDL_Surface** tableSurface, SDL_Texture** tableTexture){
+    if (SDL_Init(SDL_INIT_VIDEO) < 0) {
+        printf("SDL could not initialize! SDL_Error: %s\n", SDL_GetError());
+        return -1;
+    }
+
+    if (TTF_Init() < 0) {
+        printf("SDL_ttf could not initialize! SDL_Error: %s\n", SDL_GetError());
+        return -1;
+    }
+
+    if (IMG_Init(IMG_INIT_PNG | IMG_INIT_PNG) == 0) {
+        printf("SDL_image could not initialize! SDL_Error: %s\n", SDL_GetError());
+        return -1;
+    }
+
+    *window = SDL_CreateWindow("Simple SDL2 Application", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, WIDTH, HEIGHT, SDL_WINDOW_SHOWN);
+    if (*window == NULL) {
+        printf("Window could not be created! SDL_Error: %s\n", SDL_GetError());
+        return -1;
+    }
+
+    *renderer = SDL_CreateRenderer(*window, -1, SDL_RENDERER_ACCELERATED);
+    if (*renderer == NULL) {
+        printf("Renderer could not be created! SDL_Error: %s\n", SDL_GetError());
+        return -1;
+    }
+
+    SDL_SetRenderDrawColor(*renderer, 0, 0, 0, 255);
+
+    *tableSurface = IMG_Load("assets/table.png");
+    if (*tableSurface == NULL) {
+        printf("Image could not be loaded! SDL_Error: %s\n", SDL_GetError());
+        return -1;
+    }
+    *tableTexture = SDL_CreateTextureFromSurface(*renderer, *tableSurface);
+    SDL_FreeSurface(*tableSurface);
+
+    SDL_SetRenderDrawColor(*renderer, 0, 0, 0, 255);
+}
+
 
 int checkWin(char board[][COLS], char player) {
     // Check horizontally
@@ -84,22 +134,17 @@ void drawer(SDL_Renderer* renderer, char currentPlayer, SDL_Texture* tableTextur
     SDL_RenderClear(renderer);
 
     // SDL_SetTextureColorMod(tableTexture, (currentPlayer == 'X')*255, (currentPlayer == 'O')*255, 0);
-
-
-
     SDL_Rect rect = {.w = 100, .h = 100};
-
     printf("current player is %c\n", currentPlayer);
     for (int i = 0; i < COLS; i++) {
         for (int j = 0; j < ROWS; j++) {
-            printf("%d ", board[j][i]);
             if(board[j][i] == 0)
                 continue;
             rect.x = i * 100;
             rect.y = (j * 100) + 100;
             rect.w = 100;
             rect.h = 100;
-            SDL_SetRenderDrawColor(renderer, 255*(board[j][i]=='O'), 255*(board[j][i]=='X'), 0, 255);
+            SDL_SetRenderDrawColor(renderer, 255*(board[j][i]==1), 255*(board[j][i]==2), 0, 255);
             SDL_RenderFillRect(renderer, &rect);
             
         }
@@ -107,57 +152,8 @@ void drawer(SDL_Renderer* renderer, char currentPlayer, SDL_Texture* tableTextur
     }
 
     SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
-
-    
-    // Draw a blue rectangle
     SDL_RenderCopy(renderer, tableTexture, NULL, NULL);
-
-    // Update the screen
     SDL_RenderPresent(renderer);
-}
-
-
-void init_connection(){
-    memset(&server_addr, 0, sizeof(server_addr));
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(8080);
-    address_length = sizeof(server_addr);
-    server_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
-}
-
-
-
-void send_a_msg(char* msg, int msg_len, char* reply_buffer){
-    printf("sending ....\n");
-
-
-    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
-    if (sockfd == -1) {
-        perror("socket");
-        return;
-    }
-
-    if(connect(sockfd, (struct sockaddr *)&server_addr , (socklen_t)address_length) < 0) {
-        perror("connect");
-        return;
-    }
-    // write(new_socket, hello, strlen(hello));
-    if (send(sockfd, msg, msg_len, 0) == -1) {
-        perror("send");
-        return;
-    }
-
-    char buffer[3000];
-    bzero(buffer, sizeof(buffer));
-
-    
-    int bytes_read = read(sockfd, buffer, 3000);
-    
-
-    if(reply_buffer == NULL)
-        return;
-
-    bcopy(buffer, reply_buffer, bytes_read);
 }
 
 
@@ -198,68 +194,9 @@ char parse_string_to_state(char board[][COLS], char buffer[500]){
 }
 
 
-void* create_room(char board[][COLS], char my_turn, char* room_number){
-    // Use a loop to format the matrix into a string
-    char matrixString[500];
-
-    parse_state_to_string(board, my_turn, matrixString);
-
-    printf("current player: %c\n", current_player);
-    // Null-terminate the string
-    char buffer[600];
-    bzero(buffer, 600);
-    sprintf(buffer, "connect4 create t {%s}", matrixString);
-    send_a_msg(buffer, strlen(buffer), buffer);
-    sscanf(buffer, "room_number: %s", room_number);
-    printf("%s\n", room_number);
-    return NULL;
-}
 
 
-char join_room(char board[][COLS], char* room_number){
-    char buffer[600];
-    bzero(buffer, 600);
-    sprintf(buffer, "connect4 join %s", room_number);
-    send_a_msg(buffer, strlen(buffer), buffer);
-
-    
-}
-
-void* get_state(void* args){
-    struct ThreadArgs* thread_args = (struct ThreadArgs*)args;
-    char buffer[600];
-    bzero(buffer, 600);
-    sprintf(buffer, "connect4 get %s", thread_args->room_number);
-    char reply[500];
-
-    int count = 0;
-    while(1){
-        bzero(reply, 500);
-        send_a_msg(buffer, strlen(buffer), reply);
-        current_player = parse_string_to_state(thread_args->board, reply);
-        drawer(thread_args->renderer, current_player, thread_args->tableTexture, thread_args->board);
-        printf("current player: %c     %d\n", current_player, count++);
-        sleep(0.1);
-    }
-}
-
-
-void* make_a_move(char board[][COLS], char* room_number, char current_turn){
-    char buffer[600];
-    bzero(buffer, 600);
-    char matrixString[500];
-    bzero(matrixString, 500);
-
-    parse_state_to_string(board, current_turn, matrixString);
-    
-    sprintf(buffer, "connect4 update %s {%s}", room_number, matrixString);
-    printf("%s\n", buffer);
-    send_a_msg(buffer, strlen(buffer), buffer);
-}
-
-
-
-char controller(char board[][COLS], int count, char my_turn, char* room_number){
+char controller(char board[][COLS], int count, char my_turn){
     // Find the first empty row in the selected column
     bool done = false;
     int move;
@@ -296,9 +233,6 @@ char controller(char board[][COLS], int count, char my_turn, char* room_number){
                         printf("Invalid column\n");
                         continue;
                     }
-
-
-                    printf("%s\n", msg);
                     done = true;
                 }
                 break;
@@ -320,7 +254,7 @@ char controller(char board[][COLS], int count, char my_turn, char* room_number){
     int isFull = 1;
     for (int i = 0; i < ROWS; i++) {
         for (int j = 0; j < COLS; j++) {
-            if (board[i][j] == ' ') {
+            if (board[i][j] == 0) {
                 isFull = 0;
                 break;
             }
@@ -332,12 +266,12 @@ char controller(char board[][COLS], int count, char my_turn, char* room_number){
         // return -2;  ////open later
     }
 
-    make_a_move(board, room_number, (current_player == 'X') ? 'O' : 'X');
-
-    current_player = (current_player == 'X') ? 'O' : 'X';
+    current_player = (current_player == 1)? 2 : 1;
 
     return current_player;
 }
+
+
 
 
 int main(int argc, char* argv[]){
@@ -349,86 +283,42 @@ int main(int argc, char* argv[]){
         }
     }
 
-    if (SDL_Init(SDL_INIT_VIDEO) < 0) {
-        printf("SDL could not initialize! SDL_Error: %s\n", SDL_GetError());
-        return 1;
-    }
-
-    if (TTF_Init() < 0) {
-        printf("SDL_ttf could not initialize! SDL_Error: %s\n", SDL_GetError());
-        return 1;
-    }
-
-    if (IMG_Init(IMG_INIT_PNG | IMG_INIT_PNG) == 0) {
-        printf("SDL_image could not initialize! SDL_Error: %s\n", SDL_GetError());
-        return 1;
-    }
+    SDL_Window* window;
+    SDL_Renderer* renderer;
+    SDL_Surface* tableSurface; 
+    SDL_Texture* tableTexture;
 
 
-    SDL_Window* window = NULL;
-    window = SDL_CreateWindow("Simple SDL2 Application", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, WIDTH, HEIGHT, SDL_WINDOW_SHOWN);
-    if (window == NULL) {
-        printf("Window could not be created! SDL_Error: %s\n", SDL_GetError());
-        return 1;
-    }
+    init_sdl(&window, &renderer, &tableSurface, &tableTexture);
 
-    SDL_Renderer* renderer = NULL;
-    renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
-    if (renderer == NULL) {
-        printf("Renderer could not be created! SDL_Error: %s\n", SDL_GetError());
-        return 1;
-    }
-
-    SDL_SetRenderDrawColor(renderer, 0, 0, 255, 255);
-    
-
-    SDL_Surface* tableSurface = IMG_Load("assets/table.png");
-    if (tableSurface == NULL) {
-        printf("Image could not be loaded! SDL_Error: %s\n", SDL_GetError());
-        return 1;
-    }
-    SDL_Texture* tableTexture = SDL_CreateTextureFromSurface(renderer, tableSurface);
-    SDL_FreeSurface(tableSurface);
-
-
-    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
-
-    char my_turn = 'O';
-    init_connection();
-
-
-    struct ThreadArgs args = {.board=(char**)board, .renderer=renderer, .tableTexture=tableTexture};
-    // args.board = board;
-    
-    if(argv[1][0] == 'c'){
-        char room_number[10];
-        bzero(room_number, 10);
-        create_room(board, my_turn, room_number);
-        args.room_number = room_number;
-    }else if(argv[1][0] == 'j'){
-        my_turn = join_room(board, argv[2]);
-        args.room_number = argv[2];
-        my_turn = 'X';
-    }
-
-    pthread_t state_getter;
-    
-    if (pthread_create(&state_getter, NULL, get_state, &args) != 0) {
-        perror("pthread_create");
+    int client_socket = socket(AF_INET, SOCK_STREAM, 0);
+    if (client_socket == -1) {
+        perror("Error creating socket");
         exit(1);
     }
+    init_connection(client_socket);
 
-    // sleep(1);
+    char buffer[100];
+    bzero(buffer, 100);
+    sprintf(buffer, "connect4 %s %s", argv[1], argv[2]);
+    send(client_socket, buffer, strlen(buffer), 0);
+
+    bzero(buffer, 100);
+    recv(client_socket, buffer, sizeof(buffer), 0);
+
     bool online = true;
     int count = 0;
-    while (1) {
+
+    char my_turn = (argv[1][0]=='c')? 1 : 2;
+
+    current_player = 1;    
+
+    while (current_player != -1) {
         printf("Connect Four\n");
+        
+        drawer(renderer, current_player, tableTexture, board);
 
-        if(!online)
-            drawer(renderer, current_player, tableTexture, board);
-
-        current_player = controller(board, count, my_turn, args.room_number);
-        count++;
+        current_player = controller(board, count, my_turn);
         if(current_player < 0)
             break;
     }

@@ -185,8 +185,22 @@ void launch(struct Server* server){
     }
 }
 
+void sigchld_handler(int signo) {
+    int status;
+    pid_t child_pid;
+
+    while ((child_pid = waitpid(-1, &status, WNOHANG)) > 0) {
+        if (WIFEXITED(status)) {
+            printf("Child process %d exited with status %d\n", child_pid, WEXITSTATUS(status));
+        } else if (WIFSIGNALED(status)) {
+            printf("Child process %d terminated by signal %d\n", child_pid, WTERMSIG(status));
+        }
+    }
+}
+
 
 int main(){
+    signal(SIGCHLD, sigchld_handler);
     signal(SIGPIPE, SIG_IGN);
     srand(time(NULL));
     // send_msg_to_app("connect4", "resputian\n");

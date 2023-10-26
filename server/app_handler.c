@@ -16,6 +16,8 @@
 #include <stdbool.h>
 #include <fcntl.h>
 #include <poll.h>
+#include <hiredis/hiredis.h>
+#include <event2/event.h>
 
 // #include "LinkedList.h"
 #include "Server.h"
@@ -36,9 +38,11 @@ struct Message {
 };
 
 typedef struct Thread_args { //don't change params order
-    int room_num;
-    Node* queue;
-    pthread_mutex_t mutex;
+    int room_num; 
+    int sockfd;
+    redisContext *context;
+    redisReply* reply;
+    struct event_base* base;
 }Thread_args;
 
 void makeSockNonBlocking(int sockfd){
@@ -112,80 +116,134 @@ void forward_to_clients(Node* clients, char* buff){
 }
 
 
+void connect_to_redis(redisContext **context){
+    *context = redisConnect("localhost", 6379);
+    if (*context == NULL || (*context)->err) {
+        if (*context) {
+            printf("Connection error: %s\n", (*context)->errstr);
+            redisFree(*context);
+        } else {
+            printf("Connection error: Can't allocate redis context\n");
+        }
+        return;
+    }
+}
+
+void subscribe_to_redis(redisContext **context, redisReply **reply, int room){
+    // Create a Redis subscriber
+    *reply = redisCommand(*context, "SUBSCRIBE %d", room);
+    if (*reply == NULL) {
+        printf("Failed to subscribe to the channel\n");
+        return;
+    }
+    freeReplyObject(*reply); // Free the initial subscribe reply
+}
+
+void publish_to_redis(redisContext **context, redisReply **reply, int room, char msg[]){
+    // Create a Redis publisher
+    *reply = redisCommand(*context, "PUBLISH %d %s", room, msg);
+    if (*reply != NULL) {
+        freeReplyObject(reply);
+        printf("Published message to channel: %s\n", msg);
+    } else {
+        printf("Failed to publish the message\n");
+        return;
+    }
+}
+
+
+// Callback function for Redis events
+void redisEventCallback(evutil_socket_t fd, short events, void* arg) {
+    printf("helllo from redisEventCallback\n");
+    Thread_args* thread_args = (Thread_args*)arg;
+    int bytes_written;
+
+    if (redisGetReply(thread_args->context, (void**)&thread_args->reply) != REDIS_OK) {
+        printf("helllo from 4\n");
+        printf("Failed to receive message from Redis\n");
+    } else {
+        printf("helllo from 1\n");
+        if (thread_args->reply->element[0]->str && thread_args->reply->element[2]->str) {
+            printf("helllo from 2\n");
+            printf("Received message from channel %s: %s\n", thread_args->reply->element[1]->str, thread_args->reply->element[2]->str);
+            bytes_written = send(thread_args->sockfd, thread_args->reply->element[2]->str, strlen(thread_args->reply->element[2]->str), 0);
+            if(bytes_written == 0){
+                freeReplyObject(thread_args->reply);
+                event_base_loopbreak(thread_args->base);
+            }
+        }
+        printf("helllo from 3\n");
+        freeReplyObject(thread_args->reply);
+    }
+}
+
+// Callback function for socket events
+void socketEventCallback(evutil_socket_t fd, short events, void* arg) {
+    printf("helllo from socketEventCallback\n");
+    Thread_args* thread_args = (Thread_args*)arg;
+    char buffer[1024] = {0};
+    int bytes_read;
+
+    bzero(buffer, sizeof(buffer));
+    bytes_read = recv(fd, buffer, sizeof(buffer), 0);
+    printf("checking sock %d\nbytes read:%d\n", fd, bytes_read);
+
+    if (bytes_read > 0) {
+        // Handle the socket event here
+        publish_to_redis(&thread_args->context, &thread_args->reply, thread_args->room_num, buffer);
+        if (thread_args->reply == NULL) {
+            perror("redis publish");
+            event_base_loopbreak(thread_args->base);
+        }
+    } else if (bytes_read == 0) {
+        printf("User disconnected, exiting event loop...\n");
+        event_base_loopbreak(thread_args->base);
+    }
+}
+
 
 ///////////// next implement the room loop
 void* room_handler(void* arg){
     Thread_args* thread_args = (Thread_args*)arg;
-
     pthread_cleanup_push(room_exit_handler, &thread_args->room_num);
 
-    char response[50];
-    int client_socket = -1;
-
-    int room_mode = 1;
-
-    int count = 0;
-    pthread_t thread_id = pthread_self();
-    char buffer[5000];
-    
-    Node* clients = NULL;
-    Node* curr = NULL;
-    Node* next = NULL;
-    Node* toCurr = NULL;
-
-    unsigned long temp = 0;
-
-    int bytes_read;
-
-    do{
-        while(1){
-            pthread_mutex_lock(&thread_args->mutex);
-            if(is_empty(thread_args->queue)){
-                pthread_mutex_unlock(&thread_args->mutex);
-                break;
-            }
-            client_socket = *((int*)(pop(&thread_args->queue)));
-            pthread_mutex_unlock(&thread_args->mutex);
-
-            printf("hello world from room %lu \n", thread_id);
-
-            temp = client_socket;
-            append(&clients, (void*)temp);
-            count = 0;
-        }
-
-        snprintf(response,
-            50,
-            "hello world from %lu ! count is %d"
-            "\r\n",
-            thread_id,
-            count
-        );
-        
-        curr = clients;
-        
-        while(curr != NULL){
-            client_socket = (int)((unsigned long)(curr->data));
-            bzero(buffer, sizeof(buffer));
-            bytes_read = recv(client_socket, buffer, sizeof(buffer), 0);
-            printf("checking sock %d\nbytes read:%d\n", client_socket, bytes_read);
-            if(bytes_read > 0){
-                forward_to_clients(clients, buffer);
-            }
-            curr = curr->next;
-        }
-        
-        sleep(1);
-        count++;
-    }while(clients != NULL);
-
-    curr = clients;
-    while(curr != NULL){
-        close((int)((unsigned long)(curr->data)));
-        next = curr->next;
-        removeNode(&clients, curr);
-        curr = next;
+    connect_to_redis(&thread_args->context);
+    if (thread_args->context == NULL) {
+        perror("redis connect");
+        pthread_exit(NULL);
     }
+
+    subscribe_to_redis(&thread_args->context, &thread_args->reply, thread_args->room_num);
+    if (thread_args->reply == NULL) {
+        perror("redis subscribe");
+        pthread_exit(NULL);
+    }
+
+    printf("Subscribed to the '%d' channel. Listening for messages...\n", thread_args->room_num);
+    // Initialize libevent
+    thread_args->base = event_base_new();
+    // Create events for Redis and socket
+    struct event* redisEvent = event_new(thread_args->base, thread_args->context->fd, EV_READ | EV_PERSIST, redisEventCallback, &thread_args);
+    struct event* socketEvent = event_new(thread_args->base, thread_args->sockfd, EV_READ | EV_PERSIST, socketEventCallback, &thread_args);
+
+    // Add events to the event loop
+    event_add(redisEvent, NULL);
+    event_add(socketEvent, NULL);
+
+    struct timeval timeout = {1800,0};
+    event_base_loopexit(thread_args->base, &timeout);
+
+    if (event_base_dispatch(thread_args->base) == -1) {
+        perror("event_base_dispatch");
+        pthread_exit(NULL);
+    }
+
+    printf("helllo after dispatch\n");
+    // Cleanup and close resources as needed
+    event_base_free(thread_args->base);
+    redisCommand(thread_args->context, "UNSUBSCRIBE");
+    redisFree(thread_args->context);
+    close(thread_args->sockfd);
 
     pthread_cleanup_pop(1);
     pthread_exit(NULL);
@@ -251,43 +309,28 @@ int main(int argc, char** argv) {
 
         makeSockNonBlocking(received_fd);
         readNextArg(received_fd, command);
+        makeSockBlocking(received_fd);
 
         
 
         switch (command[0]){
             case 'c':
-                Thread_args args = {.queue=NULL};
-                append(&args.queue, &received_fd);
-                pthread_mutex_init(&args.mutex, NULL);
+                int room_number = rand() % 9000 + 1000;
+                printf("room number: %d\n", room_number);
+                Thread_args args = {.room_num=room_number, .sockfd=received_fd};
                 printf("creating thread\n");
                 pthread_t thread;
                 pthread_create(&thread, NULL, room_handler, &args);
-                // created = true;
-                // targeted_room = &args;
-                int room_number = rand() % 9000 + 1000;
-                printf("room number: %d\n", room_number);
-                args.room_num = room_number;
                 pthread_mutex_lock(&rooms_mutex);
                 append(&rooms, &args);
                 pthread_mutex_unlock(&rooms_mutex);
                 break;
             case 'j':
                 printf("adding you\n");
+                makeSockNonBlocking(received_fd);
                 readNextArg(received_fd, room_number_str);
-                pthread_mutex_lock(&rooms_mutex);
-                Node* targeted_room = search(rooms, atoi(room_number_str));
-                pthread_mutex_unlock(&rooms_mutex);
-                if(targeted_room == NULL){
-                    printf("Room not found\n");
-                    send(received_fd, "Room not found\n", 16, 0);
-                    close(received_fd);
-                    break;
-                }
-                pthread_mutex_lock(&((Thread_args*)(targeted_room->data))->mutex);
-                append(&((Thread_args*)(targeted_room->data))->queue, &received_fd);
-                pthread_mutex_unlock(&((Thread_args*)(targeted_room->data))->mutex);
-            
-        
+                makeSockBlocking(received_fd);
+                /// check if such room exists in redis first
                 break;
             default:
                 break;

@@ -24,6 +24,10 @@
         "unordered_set": "c",
         "initializer_list": "c",
         "random": "c",
-        "bitset": "c"
+        "bitset": "c",
+        "lws-adopt.h": "c",
+        "lws-struct.h": "c",
+        "libwebsockets.h": "c",
+        "utility": "c"
     }
 }
