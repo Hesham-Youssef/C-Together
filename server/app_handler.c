@@ -34,11 +34,7 @@
 
 */
 
-
-
-
-
-
+char* app_name;
 typedef struct Queue Queue;
 
 Node* rooms = NULL;
@@ -79,6 +75,7 @@ void makeSockBlocking(int sockfd){
 
 
 void readNextArg(int sockfd, char buff[]){
+    makeSockNonBlocking(sockfd);
     int offset = 0, bytes_read;
     while((offset < 50 && bytes_read != -1)){
         bytes_read = recv(sockfd, buff+offset, 1, 0);
@@ -90,6 +87,7 @@ void readNextArg(int sockfd, char buff[]){
         offset++;
     }
     printf("done reading %s\n", buff);
+    makeSockBlocking(sockfd);
 }
 
 
@@ -109,28 +107,8 @@ void room_exit_handler(void* arg) {
 }
 
 
-void forward_to_clients(Node* clients, char* buff){
-    Node* curr = clients;
-    Node* next = NULL;
-    int client_socket;
-    while(curr != NULL){
-        client_socket = (int)((unsigned long)(curr->data));
-        int bytes_written = send(client_socket, buff, strlen(buff), 0);
-        if(bytes_written == -1){
-            printf("deleting %d\n", client_socket);
-            next = curr->next;
-            removeNode(&clients, curr);
-            close(client_socket);
-            curr = next;
-            continue;
-        }
-        curr = curr->next;
-    }
-}
-
 
 void connect_to_redis(redisContext **context){
-    printf("context addr: %lu\n", context);
     *context = redisConnect("localhost", 6379);
     if (*context == NULL || (*context)->err) {
         if (*context) {
@@ -145,7 +123,7 @@ void connect_to_redis(redisContext **context){
 
 void subscribe_to_redis(redisContext **context, redisReply **reply, int room){
     // Create a Redis subscriber
-    *reply = redisCommand(*context, "SUBSCRIBE %d", room);
+    *reply = redisCommand(*context, "SUBSCRIBE %s-%d", app_name, room);
     if (*reply == NULL) {
         printf("Failed to subscribe to the channel\n");
         return;
@@ -155,7 +133,7 @@ void subscribe_to_redis(redisContext **context, redisReply **reply, int room){
 
 void publish_to_redis(redisContext **context, redisReply **reply, int room, char msg[]){
     // Create a Redis publisher
-    *reply = redisCommand(*context, "PUBLISH %d %s", room, msg);
+    *reply = redisCommand(*context, "PUBLISH %s-%d %s", app_name, room, msg);
     if (*reply != NULL) {
         printf("before reply free in publish\n");
         freeReplyObject(*reply);
@@ -167,7 +145,7 @@ void publish_to_redis(redisContext **context, redisReply **reply, int room, char
 }
 
 bool room_exists(redisContext **context, int room) {
-    redisReply *existsReply = redisCommand(*context, "PUBSUB NUMSUB %d", room);
+    redisReply *existsReply = redisCommand(*context, "PUBSUB NUMSUB %s-%d", app_name, room);
     if (existsReply == NULL || existsReply->type != REDIS_REPLY_ARRAY) {
         fprintf(stderr, "Error checking channel existence\n");
         return false;
@@ -191,7 +169,6 @@ bool room_exists(redisContext **context, int room) {
 // Callback function for Redis events
 void redisEventCallback(evutil_socket_t fd, short events, void* arg) {
     Thread_args* thread_args = (Thread_args*)arg;
-    printf("context add: %lu\n", thread_args->context);
     if (redisGetReply(thread_args->context, (void**)&thread_args->reply) != REDIS_OK) {
         printf("Failed to receive message from Redis\n");
     } else {
@@ -293,9 +270,9 @@ int main(int argc, char** argv) {
     close(atoi(argv[3]));
 
     pthread_mutex_init(&rooms_mutex, NULL);
+    app_name = argv[1];
 
     printf("hello world inside new child\n");
-
 
     int my_un_socket = atoi(argv[2]);
     int received_fd;
@@ -317,9 +294,6 @@ int main(int argc, char** argv) {
     int count = 0;
     bool created = false;
 
-    
-    // Thread_args* targeted_room = NULL;
-
     char command[50];
     bzero(command, 50);
 
@@ -335,25 +309,15 @@ int main(int argc, char** argv) {
             perror("recvmsg");
             exit(1);
         }
-
         cmptr = CMSG_FIRSTHDR(&msg);
         if (cmptr == NULL || cmptr->cmsg_len != CONTROLLEN) {
             perror("bad control message");
             exit(1);
         }
-
         received_fd = *((int *)CMSG_DATA(cmptr));
-
-        makeSockNonBlocking(received_fd);
+    
         readNextArg(received_fd, command);
-        makeSockBlocking(received_fd);
-
-        ////////////////////////////////////// JOIN STILL NOT DONE
-        /*
-            CREATE A CONTEXT HERE BEFORE LOOP
-            REDISCONTEXT* CTX;
-            AND USE THIS TO CHECK IF A ROOM EXI
-        */
+        
         switch (command[0]){
             case 'c':
                 room_number = rand() % 9000 + 1000;
@@ -361,12 +325,10 @@ int main(int argc, char** argv) {
                 create_user_thread(received_fd, room_number);
                 break;
             case 'j':
-                printf("adding you\n");
-                makeSockNonBlocking(received_fd);
                 readNextArg(received_fd, room_number_str);
-                makeSockBlocking(received_fd);
                 room_number = atoi(room_number_str);
                 if(room_exists(&context, room_number)){
+                    printf("adding you\n");
                     create_user_thread(received_fd, room_number);
                 }else{
                     if (send(received_fd, "Room doesn't exist :(", 22, 0) == -1) {
