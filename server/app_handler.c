@@ -26,16 +26,23 @@
 #define CONTROLLEN CMSG_LEN(sizeof(int))
 #define TIMEOUT 500
 
+
+
+/*
+
+    DON'T FORGET TO CONCAT THE APP NAME TO DISTINGUISH BETWEEN DIFFERENT ROOMS 
+
+*/
+
+
+
+
+
+
 typedef struct Queue Queue;
 
 Node* rooms = NULL;
 pthread_mutex_t rooms_mutex;
-
-// Define a structure for the message
-struct Message {
-    long mtype;
-    char mtext[100];
-};
 
 typedef struct Thread_args { //don't change params order
     int room_num; 
@@ -151,43 +158,42 @@ void publish_to_redis(redisContext **context, redisReply **reply, int room, char
     }
 }
 
+bool room_exists(redisContext **context, int room){
+    // Check if the channel exists before subscribing
+    redisReply *existsReply = redisCommand(context, "EXISTS %d", room);
+    if (existsReply == NULL || existsReply->type != REDIS_REPLY_INTEGER || existsReply->integer == 0) {
+        fprintf(stderr, "The channel does not exist or is empty\n");
+        exit(1);
+    }
+    freeReplyObject(existsReply);
+}
 
 // Callback function for Redis events
 void redisEventCallback(evutil_socket_t fd, short events, void* arg) {
-    printf("helllo from redisEventCallback\n");
     Thread_args* thread_args = (Thread_args*)arg;
-    int bytes_written;
-
     if (redisGetReply(thread_args->context, (void**)&thread_args->reply) != REDIS_OK) {
-        printf("helllo from 4\n");
         printf("Failed to receive message from Redis\n");
     } else {
-        printf("helllo from 1\n");
         if (thread_args->reply->element[0]->str && thread_args->reply->element[2]->str) {
-            printf("helllo from 2\n");
             printf("Received message from channel %s: %s\n", thread_args->reply->element[1]->str, thread_args->reply->element[2]->str);
-            bytes_written = send(thread_args->sockfd, thread_args->reply->element[2]->str, strlen(thread_args->reply->element[2]->str), 0);
+            int bytes_written = send(thread_args->sockfd, thread_args->reply->element[2]->str, strlen(thread_args->reply->element[2]->str), 0);
             if(bytes_written == 0){
                 freeReplyObject(thread_args->reply);
                 event_base_loopbreak(thread_args->base);
             }
         }
-        printf("helllo from 3\n");
         freeReplyObject(thread_args->reply);
     }
 }
 
 // Callback function for socket events
 void socketEventCallback(evutil_socket_t fd, short events, void* arg) {
-    printf("helllo from socketEventCallback\n");
     Thread_args* thread_args = (Thread_args*)arg;
     char buffer[1024] = {0};
     int bytes_read;
-
     bzero(buffer, sizeof(buffer));
     bytes_read = recv(fd, buffer, sizeof(buffer), 0);
     printf("checking sock %d\nbytes read:%d\n", fd, bytes_read);
-
     if (bytes_read > 0) {
         // Handle the socket event here
         publish_to_redis(&thread_args->context, &thread_args->reply, thread_args->room_num, buffer);
@@ -219,14 +225,13 @@ void* room_handler(void* arg){
         pthread_exit(NULL);
     }
 
-    printf("Subscribed to the '%d' channel. Listening for messages...\n", thread_args->room_num);
+    printf("Subscribed to the %d channel. Listening for messages...\n", thread_args->room_num);
     // Initialize libevent
     thread_args->base = event_base_new();
     // Create events for Redis and socket
-    struct event* redisEvent = event_new(thread_args->base, thread_args->context->fd, EV_READ | EV_PERSIST, redisEventCallback, &thread_args);
-    struct event* socketEvent = event_new(thread_args->base, thread_args->sockfd, EV_READ | EV_PERSIST, socketEventCallback, &thread_args);
+    struct event* redisEvent = event_new(thread_args->base, thread_args->context->fd, EV_READ | EV_PERSIST, redisEventCallback, thread_args);
+    struct event* socketEvent = event_new(thread_args->base, thread_args->sockfd, EV_READ | EV_PERSIST, socketEventCallback, thread_args);
 
-    // Add events to the event loop
     event_add(redisEvent, NULL);
     event_add(socketEvent, NULL);
 
@@ -238,13 +243,13 @@ void* room_handler(void* arg){
         pthread_exit(NULL);
     }
 
-    printf("helllo after dispatch\n");
     // Cleanup and close resources as needed
+    event_free(redisEvent);
+    event_free(socketEvent);
     event_base_free(thread_args->base);
     redisCommand(thread_args->context, "UNSUBSCRIBE");
     redisFree(thread_args->context);
     close(thread_args->sockfd);
-
     pthread_cleanup_pop(1);
     pthread_exit(NULL);
 }
@@ -310,8 +315,6 @@ int main(int argc, char** argv) {
         makeSockNonBlocking(received_fd);
         readNextArg(received_fd, command);
         makeSockBlocking(received_fd);
-
-        
 
         switch (command[0]){
             case 'c':
