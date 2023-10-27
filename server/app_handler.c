@@ -25,6 +25,8 @@
 
 #define CONTROLLEN CMSG_LEN(sizeof(int))
 #define TIMEOUT 500
+#define MAX_STATE_SIZE 1024
+#define ROOM_NUMBER_LENGTH 4
 
 
 
@@ -41,11 +43,12 @@ Node* rooms = NULL;
 pthread_mutex_t rooms_mutex;
 
 typedef struct Thread_args { //don't change params order
-    int room_num; 
     int sockfd;
+    int room_num; 
     redisContext *context;
     redisReply* reply;
     struct event_base* base;
+    bool creator;
 }Thread_args;
 
 void makeSockNonBlocking(int sockfd){
@@ -75,7 +78,7 @@ void makeSockBlocking(int sockfd){
 
 
 void readNextArg(int sockfd, char buff[]){
-    makeSockNonBlocking(sockfd);
+    // makeSockNonBlocking(sockfd);
     int offset = 0, bytes_read;
     while((offset < 50 && bytes_read != -1)){
         bytes_read = recv(sockfd, buff+offset, 1, 0);
@@ -87,7 +90,7 @@ void readNextArg(int sockfd, char buff[]){
         offset++;
     }
     printf("done reading %s\n", buff);
-    makeSockBlocking(sockfd);
+    // makeSockBlocking(sockfd);
 }
 
 
@@ -96,7 +99,7 @@ void room_exit_handler(void* arg) {
     Thread_args* thread_args = (Thread_args*)arg;
     printf("Thread cleanup: Exiting... room %d\n", thread_args->room_num);
     pthread_mutex_lock(&rooms_mutex);
-    removeElement(&rooms, thread_args->room_num);
+    removeElement(&rooms, thread_args->sockfd);
     printList(rooms);
     pthread_mutex_unlock(&rooms_mutex);
     event_base_free(thread_args->base);
@@ -135,13 +138,51 @@ void publish_to_redis(redisContext **context, redisReply **reply, int room, char
     // Create a Redis publisher
     *reply = redisCommand(*context, "PUBLISH %s-%d %s", app_name, room, msg);
     if (*reply != NULL) {
-        printf("before reply free in publish\n");
         freeReplyObject(*reply);
         printf("Published message to channel: %s\n", msg);
     } else {
         printf("Failed to publish the message\n");
         return;
     }
+}
+
+void save_state_to_redis(redisContext **context, redisReply **reply, int room, int sockfd){
+    // Create a Redis publisher
+    char state[MAX_STATE_SIZE];
+    bzero(state, MAX_STATE_SIZE);
+    int bytes_read = recv(sockfd, state, MAX_STATE_SIZE, 0);
+    if(bytes_read == 0){
+        close(sockfd);
+        *reply = NULL;
+        return;
+    }
+    *reply = redisCommand(*context, "SET %s-%d-key %s", app_name, room, state);
+    if (*reply != NULL) {
+        printf("Set value: %s\nto key: %s-%d-key\n", state, app_name, room);
+    } else {
+        printf("Failed to publish the message\n");
+        close(sockfd);
+        *reply = NULL;
+    }
+}
+
+void get_state_from_redis(redisContext **context, redisReply **reply, int room){
+    // Fetch the value of the key
+    *reply = redisCommand(*context, "GET %s-%d-key", app_name, room);
+    if (*reply == NULL) {
+        fprintf(stderr, "Error fetching key %s-%d\n", app_name, room);
+        pthread_exit(NULL);
+    }
+
+    if ((*reply)->type == REDIS_REPLY_STRING) {
+        printf("Value of key %s-%d-key: %s\n", app_name, room, (*reply)->str);
+        return;
+    } else if ((*reply)->type == REDIS_REPLY_NIL) {
+        printf("Key %s-%d-key does not exist in Redis.\n", app_name, room);
+    } else {
+        fprintf(stderr, "Unexpected reply type: %d\n", (*reply)->type);
+    }
+    pthread_exit(NULL);
 }
 
 bool room_exists(redisContext **context, int room) {
@@ -154,16 +195,16 @@ bool room_exists(redisContext **context, int room) {
         int numSubscribers = existsReply->element[1]->integer;
         if (numSubscribers > 0) {
             printf("Channel '%d' exists and has %d subscribers.\n", room, numSubscribers);
+            freeReplyObject(existsReply);
             return true;
         } else {
             printf("Channel '%d' exists but has no subscribers.\n", room);
-            return false;
         }
     } else {
         printf("Channel '%d' does not exist.\n", room);
-        return false;
     }
     freeReplyObject(existsReply);
+    return false;
 }
 
 // Callback function for Redis events
@@ -187,7 +228,7 @@ void redisEventCallback(evutil_socket_t fd, short events, void* arg) {
 // Callback function for socket events
 void socketEventCallback(evutil_socket_t fd, short events, void* arg) {
     Thread_args* thread_args = (Thread_args*)arg;
-    char buffer[1024] = {0};
+    char buffer[MAX_STATE_SIZE] = {0};
     int bytes_read;
     bzero(buffer, sizeof(buffer));
     bytes_read = recv(fd, buffer, sizeof(buffer), 0);
@@ -217,6 +258,31 @@ void* room_handler(void* arg){
         pthread_exit(NULL);
     }
 
+    if(thread_args->creator){
+        save_state_to_redis(&thread_args->context, &thread_args->reply, thread_args->room_num, thread_args->sockfd);
+        if(thread_args->reply == NULL){
+            return NULL;
+        }
+        char message[24 + ROOM_NUMBER_LENGTH]; // Adjust the size as needed
+        bzero(message, 24 + ROOM_NUMBER_LENGTH);
+        snprintf(message, sizeof(message), "Your room number: %d", thread_args->room_num);
+        int bytes_written = send(thread_args->sockfd, message, strlen(message), 0);
+        freeReplyObject(thread_args->reply);
+        if(bytes_written == 0){
+            return NULL;
+        }
+    }else{
+        get_state_from_redis(&thread_args->context, &thread_args->reply, thread_args->room_num);
+        if(thread_args->reply == NULL){
+            return NULL;
+        }
+        int bytes_written = send(thread_args->sockfd, thread_args->reply->str, strlen(thread_args->reply->str), 0);
+        freeReplyObject(thread_args->reply);
+        if(bytes_written == 0){
+            return NULL;
+        }
+    }
+
     subscribe_to_redis(&thread_args->context, &thread_args->reply, thread_args->room_num);
     if (thread_args->reply == NULL) {
         perror("redis subscribe");
@@ -240,7 +306,6 @@ void* room_handler(void* arg){
         perror("event_base_dispatch");
         pthread_exit(NULL);
     }
-
     // Cleanup and close resources as needed
     event_free(redisEvent);
     event_free(socketEvent);
@@ -249,10 +314,11 @@ void* room_handler(void* arg){
 }
 
 
-void create_user_thread(int sockfd, int room){
+void create_user_thread(int sockfd, int room, bool creator){
     Thread_args* args = (Thread_args *)malloc(sizeof(Thread_args)); //////////////don't forget to freeee
-    args->room_num=room;
-    args->sockfd=sockfd;
+    args->room_num = room;
+    args->sockfd = sockfd;
+    args->creator = creator;
     printf("creating thread\n");
     pthread_t thread;
     pthread_create(&thread, NULL, room_handler, args); 
@@ -315,25 +381,25 @@ int main(int argc, char** argv) {
             exit(1);
         }
         received_fd = *((int *)CMSG_DATA(cmptr));
-    
+        
+        makeSockNonBlocking(received_fd);
         readNextArg(received_fd, command);
         
         switch (command[0]){
             case 'c':
                 room_number = rand() % 9000 + 1000;
                 printf("room number: %d\n", room_number);
-                create_user_thread(received_fd, room_number);
+                create_user_thread(received_fd, room_number, true);
                 break;
             case 'j':
                 readNextArg(received_fd, room_number_str);
                 room_number = atoi(room_number_str);
                 if(room_exists(&context, room_number)){
                     printf("adding you\n");
-                    create_user_thread(received_fd, room_number);
+                    create_user_thread(received_fd, room_number, false);
                 }else{
                     if (send(received_fd, "Room doesn't exist :(", 22, 0) == -1) {
                         perror("send");
-                        return 1;
                     }
                     close(received_fd);
                 }

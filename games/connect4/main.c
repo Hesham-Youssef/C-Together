@@ -203,12 +203,12 @@ char controller(char board[][COLS], int count, char my_turn){
     SDL_Event event;
     char msg[100];
     int msg_len = sprintf(msg, "Count is %d", count);
-    for (int i = 0; i < REALROWS; i++) {
-        for (int j = 0; j < COLS; j++) {
-            printf("%d ", board[i][j]);
-        }
-        printf("\n");
-    }
+    // for (int i = 0; i < REALROWS; i++) {
+    //     for (int j = 0; j < COLS; j++) {
+    //         printf("%d ", board[i][j]);
+    //     }
+    //     printf("\n");
+    // }
 
     while(!done){
         SDL_WaitEvent(&event);
@@ -220,14 +220,11 @@ char controller(char board[][COLS], int count, char my_turn){
                 if(event.button.button == SDL_BUTTON_LEFT){
                     int x, y;
                     SDL_GetMouseState(&x,&y);
-
                     printf("x:%d   y:%d\n", x, y);
-
                     if(current_player != my_turn){
                         printf("not your turn\n");
                         continue;
                     }
-
                     move  = x/100;
                     if (y < 100 || move < 0 || move >= COLS) {
                         printf("Invalid column\n");
