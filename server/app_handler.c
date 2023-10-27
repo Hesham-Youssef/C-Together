@@ -27,6 +27,7 @@
 #define TIMEOUT 500
 #define MAX_STATE_SIZE 1024
 #define ROOM_NUMBER_LENGTH 4
+#define ID_LENGTH 4
 
 
 
@@ -45,10 +46,13 @@ pthread_mutex_t rooms_mutex;
 typedef struct Thread_args { //don't change params order
     int sockfd;
     int room_num; 
-    redisContext *context;
+    redisContext *sub_context;
+    redisContext *pub_context;
+    redisContext *key_context;
     redisReply* reply;
     struct event_base* base;
     bool creator;
+    int id;
 }Thread_args;
 
 void makeSockNonBlocking(int sockfd){
@@ -103,8 +107,10 @@ void room_exit_handler(void* arg) {
     printList(rooms);
     pthread_mutex_unlock(&rooms_mutex);
     event_base_free(thread_args->base);
-    redisCommand(thread_args->context, "UNSUBSCRIBE");
-    redisFree(thread_args->context);
+    redisCommand(thread_args->sub_context, "UNSUBSCRIBE");
+    redisFree(thread_args->sub_context);
+    redisFree(thread_args->pub_context);
+    redisFree(thread_args->key_context);
     close(thread_args->sockfd);
     free(thread_args);
 }
@@ -124,63 +130,65 @@ void connect_to_redis(redisContext **context){
     }
 }
 
-void subscribe_to_redis(redisContext **context, redisReply **reply, int room){
+void subscribe_to_redis(Thread_args* args){
     // Create a Redis subscriber
-    *reply = redisCommand(*context, "SUBSCRIBE %s-%d", app_name, room);
-    if (*reply == NULL) {
+    args->reply = redisCommand(args->sub_context, "SUBSCRIBE %s-%d", app_name, args->room_num);
+    if (args->reply == NULL) {
         printf("Failed to subscribe to the channel\n");
         return;
     }
-    freeReplyObject(*reply); // Free the initial subscribe reply
+    freeReplyObject(args->reply); // Free the initial subscribe reply
 }
 
-void publish_to_redis(redisContext **context, redisReply **reply, int room, char msg[]){
+void publish_to_redis(Thread_args* args, char msg[]){
     // Create a Redis publisher
-    *reply = redisCommand(*context, "PUBLISH %s-%d %s", app_name, room, msg);
-    if (*reply != NULL) {
-        freeReplyObject(*reply);
-        printf("Published message to channel: %s\n", msg);
+    printf("hel\n");
+    args->reply = redisCommand(args->pub_context, "PUBLISH %s-%d \"%d-%s\"", app_name, args->room_num, args->id, msg);
+    printf("www\n");
+    if (args->reply != NULL) {
+        printf("Published message to channel: %s\n", args->reply->str);
+        freeReplyObject(args->reply);
     } else {
         printf("Failed to publish the message\n");
         return;
     }
 }
 
-void save_state_to_redis(redisContext **context, redisReply **reply, int room, int sockfd){
+void save_state_to_redis(Thread_args* args){
     // Create a Redis publisher
     char state[MAX_STATE_SIZE];
     bzero(state, MAX_STATE_SIZE);
-    int bytes_read = recv(sockfd, state, MAX_STATE_SIZE, 0);
+    int bytes_read = recv(args->sockfd, state, MAX_STATE_SIZE, 0);
     if(bytes_read == 0){
-        close(sockfd);
-        *reply = NULL;
+        close(args->sockfd);
+        args->reply = NULL;
         return;
     }
-    *reply = redisCommand(*context, "SET %s-%d-key %s", app_name, room, state);
-    if (*reply != NULL) {
-        printf("Set value: %s\nto key: %s-%d-key\n", state, app_name, room);
+    args->reply = redisCommand(args->key_context, "SET %s-%d-key \"%s\"", app_name, args->room_num, state);
+    if (args->reply != NULL) {
+        printf("Set value: %s\nto key: %s-%d-key\n", state, app_name, args->room_num);
     } else {
         printf("Failed to publish the message\n");
-        close(sockfd);
-        *reply = NULL;
+        close(args->sockfd);
+        args->reply = NULL;
     }
 }
 
-void get_state_from_redis(redisContext **context, redisReply **reply, int room){
+void get_state_from_redis(Thread_args* args){
     // Fetch the value of the key
-    *reply = redisCommand(*context, "GET %s-%d-key", app_name, room);
-    if (*reply == NULL) {
-        fprintf(stderr, "Error fetching key %s-%d\n", app_name, room);
+    args->reply = redisCommand(args->key_context, "GET %s-%d-key", app_name, args->room_num);
+    if (args->reply == NULL) {
+        fprintf(stderr, "Error fetching key %s-%d\n", app_name, args->room_num);
         pthread_exit(NULL);
     }
 
-    if ((*reply)->type == REDIS_REPLY_STRING) {
-        printf("Value of key %s-%d-key: %s\n", app_name, room, (*reply)->str);
+    if (args->reply->type == REDIS_REPLY_STRING) {
+        printf("Value of key %s-%d-key: %s\n", app_name, args->room_num, args->reply->str);
         return;
-    } else if ((*reply)->type == REDIS_REPLY_NIL) {
-        printf("Key %s-%d-key does not exist in Redis.\n", app_name, room);
+    } else if (args->reply->type == REDIS_REPLY_NIL) {
+        printf("Key %s-%d-key does not exist in Redis.\n", app_name, args->room_num);
     } else {
-        fprintf(stderr, "Unexpected reply type: %d\n", (*reply)->type);
+        fprintf(stderr, "Unexpected reply type: %d\n", args->reply->type);
     }
     pthread_exit(NULL);
 }
@@ -210,15 +218,19 @@ bool room_exists(redisContext **context, int room) {
 // Callback function for Redis events
 void redisEventCallback(evutil_socket_t fd, short events, void* arg) {
     Thread_args* thread_args = (Thread_args*)arg;
-    if (redisGetReply(thread_args->context, (void**)&thread_args->reply) != REDIS_OK) {
+    if (redisGetReply(thread_args->sub_context, (void**)&thread_args->reply) != REDIS_OK) {
         printf("Failed to receive message from Redis\n");
     } else {
         if (thread_args->reply->element[0]->str && thread_args->reply->element[2]->str) {
             printf("Received message from channel %s: %s\n", thread_args->reply->element[1]->str, thread_args->reply->element[2]->str);
-            int bytes_written = send(thread_args->sockfd, thread_args->reply->element[2]->str, strlen(thread_args->reply->element[2]->str), 0);
-            if(bytes_written == 0){
-                freeReplyObject(thread_args->reply);
-                event_base_loopbreak(thread_args->base);
+            *((thread_args->reply->element[2]->str)+ID_LENGTH+1) = '\0';
+            printf("id: %d\n", atoi((thread_args->reply->element[2]->str)+1));
+            if(thread_args->id != atoi((thread_args->reply->element[2]->str)+1)){
+                int bytes_written = send(thread_args->sockfd, thread_args->reply->element[2]->str+ID_LENGTH+2, strlen(thread_args->reply->element[2]->str+ID_LENGTH+2)-1, 0);
+                if(bytes_written == 0){
+                    freeReplyObject(thread_args->reply);
+                    event_base_loopbreak(thread_args->base);
+                }
             }
         }
         freeReplyObject(thread_args->reply);
@@ -235,7 +247,7 @@ void socketEventCallback(evutil_socket_t fd, short events, void* arg) {
     printf("checking sock %d\nbytes read:%d\n", fd, bytes_read);
     if (bytes_read > 0) {
         // Handle the socket event here
-        publish_to_redis(&thread_args->context, &thread_args->reply, thread_args->room_num, buffer);
+        publish_to_redis(thread_args, buffer);
         if (thread_args->reply == NULL) {
             perror("redis publish");
             event_base_loopbreak(thread_args->base);
@@ -252,14 +264,26 @@ void* room_handler(void* arg){
     Thread_args* thread_args = (Thread_args*)arg;
     pthread_cleanup_push(room_exit_handler, thread_args);
 
-    connect_to_redis(&thread_args->context);
-    if (thread_args->context == NULL) {
+    connect_to_redis(&thread_args->sub_context);
+    if (thread_args->sub_context == NULL) {
+        perror("redis connect");
+        pthread_exit(NULL);
+    }
+
+    connect_to_redis(&thread_args->pub_context);
+    if (thread_args->pub_context == NULL) {
+        perror("redis connect");
+        pthread_exit(NULL);
+    }
+
+    connect_to_redis(&thread_args->key_context);
+    if (thread_args->key_context == NULL) {
         perror("redis connect");
         pthread_exit(NULL);
     }
 
     if(thread_args->creator){
-        save_state_to_redis(&thread_args->context, &thread_args->reply, thread_args->room_num, thread_args->sockfd);
+        save_state_to_redis(thread_args);
         if(thread_args->reply == NULL){
             return NULL;
         }
@@ -272,18 +296,18 @@ void* room_handler(void* arg){
             return NULL;
         }
     }else{
-        get_state_from_redis(&thread_args->context, &thread_args->reply, thread_args->room_num);
+        get_state_from_redis(thread_args);
         if(thread_args->reply == NULL){
             return NULL;
         }
-        int bytes_written = send(thread_args->sockfd, thread_args->reply->str, strlen(thread_args->reply->str), 0);
+        int bytes_written = send(thread_args->sockfd, thread_args->reply->str+1, strlen(thread_args->reply->str+1)-1, 0);
         freeReplyObject(thread_args->reply);
         if(bytes_written == 0){
             return NULL;
         }
     }
 
-    subscribe_to_redis(&thread_args->context, &thread_args->reply, thread_args->room_num);
+    subscribe_to_redis(thread_args);
     if (thread_args->reply == NULL) {
         perror("redis subscribe");
         pthread_exit(NULL);
@@ -293,7 +317,7 @@ void* room_handler(void* arg){
     // Initialize libevent
     thread_args->base = event_base_new();
     // Create events for Redis and socket
-    struct event* redisEvent = event_new(thread_args->base, thread_args->context->fd, EV_READ | EV_PERSIST, redisEventCallback, thread_args);
+    struct event* redisEvent = event_new(thread_args->base, thread_args->sub_context->fd, EV_READ | EV_PERSIST, redisEventCallback, thread_args);
     struct event* socketEvent = event_new(thread_args->base, thread_args->sockfd, EV_READ | EV_PERSIST, socketEventCallback, thread_args);
 
     event_add(redisEvent, NULL);
@@ -319,6 +343,7 @@ void create_user_thread(int sockfd, int room, bool creator){
     args->room_num = room;
     args->sockfd = sockfd;
     args->creator = creator;
+    args->id = rand() % 9000 + 1000;
     printf("creating thread\n");
     pthread_t thread;
     pthread_create(&thread, NULL, room_handler, args); 
@@ -420,8 +445,9 @@ int main(int argc, char** argv) {
     close(my_un_socket);
     // Remove the message queue
     // msgctl(msgid, IPC_RMID, NULL);
-
+    
     printf("exiting app handler %s\n", argv[1]);
+    printList(rooms);
 
     return 0;
 }

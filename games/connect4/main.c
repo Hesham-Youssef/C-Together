@@ -8,6 +8,8 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <pthread.h>
+#include <sys/ioctl.h>
+#include <fcntl.h>
 
 #define ROWS 6
 #define COLS 7
@@ -135,7 +137,6 @@ void drawer(SDL_Renderer* renderer, char currentPlayer, SDL_Texture* tableTextur
 
     // SDL_SetTextureColorMod(tableTexture, (currentPlayer == 'X')*255, (currentPlayer == 'O')*255, 0);
     SDL_Rect rect = {.w = 100, .h = 100};
-    printf("current player is %c\n", currentPlayer);
     for (int i = 0; i < COLS; i++) {
         for (int j = 0; j < ROWS; j++) {
             if(board[j][i] == 0)
@@ -148,7 +149,6 @@ void drawer(SDL_Renderer* renderer, char currentPlayer, SDL_Texture* tableTextur
             SDL_RenderFillRect(renderer, &rect);
             
         }
-        printf("\n");
     }
 
     SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
@@ -157,7 +157,7 @@ void drawer(SDL_Renderer* renderer, char currentPlayer, SDL_Texture* tableTextur
 }
 
 
-void parse_state_to_string(char board[][COLS], char turn, char matrixString[500]){
+void parse_state_to_string(char board[][COLS], char turn, char matrixString[]){
     int offset = 0;
     for (int i = 0; i < REALROWS; i++) {
         for (int j = 0; j < COLS; j++) {
@@ -172,79 +172,49 @@ void parse_state_to_string(char board[][COLS], char turn, char matrixString[500]
 }
 
 
-char parse_string_to_state(char board[][COLS], char buffer[500]){
+void parse_string_to_state(const char matrixString[], char board[][COLS], char *turn) {
+    int offset = 0;
     
-    int row = 0, col = 0;
-    char *token = strtok(buffer, " \n"); // Tokenize using space and newline as delimiters
-    int temp;
-    
-    while (token != NULL && row < 7) {
-        sscanf(token, "%d", &temp);
-        board[row][col] = temp;
-        col++;
-
-        if (col == 7) {
-            col = 0;
-            row++;
+    for (int i = 0; i < REALROWS; i++) {
+        for (int j = 0; j < COLS; j++) {
+            int value;
+            if (sscanf(matrixString + offset, "%d ", &value) == 1) {
+                board[i][j] = (char)value;
+                // Move the offset past the parsed value
+                while (matrixString[offset] != ' ' && matrixString[offset] != '\0') {
+                    offset++;
+                }
+                offset++; // Move past the space
+            }
         }
-
-        token = strtok(NULL, " \n");
     }
-    return token[0];
+
+    printf("turn: %d\n", matrixString[offset]);
+    *turn = matrixString[offset];
 }
 
 
-
-
-char controller(char board[][COLS], int count, char my_turn){
-    // Find the first empty row in the selected column
-    bool done = false;
-    int move;
-    SDL_Event event;
-    char msg[100];
-    int msg_len = sprintf(msg, "Count is %d", count);
-    // for (int i = 0; i < REALROWS; i++) {
-    //     for (int j = 0; j < COLS; j++) {
-    //         printf("%d ", board[i][j]);
+int make_move(){
+    // bool done = false;
+    // int move;
+    // SDL_Event event;
+    // while(!done){
+        
     //     }
-    //     printf("\n");
     // }
+    // return move;
+}
 
-    while(!done){
-        SDL_WaitEvent(&event);
-        switch(event.type){
-            case SDL_QUIT:
-                done = true;
-                return -1;
-            case SDL_MOUSEBUTTONDOWN:
-                if(event.button.button == SDL_BUTTON_LEFT){
-                    int x, y;
-                    SDL_GetMouseState(&x,&y);
-                    printf("x:%d   y:%d\n", x, y);
-                    if(current_player != my_turn){
-                        printf("not your turn\n");
-                        continue;
-                    }
-                    move  = x/100;
-                    if (y < 100 || move < 0 || move >= COLS) {
-                        printf("Invalid column\n");
-                        continue;
-                    }
-                    done = true;
-                }
-                break;
-        }
-    }
 
-    // Check if the column is valid
+char controller(char board[][COLS], int move){
     if(board[REALROWS-1][move] >= 6)
         return current_player;
     board[REALROWS-(board[REALROWS-1][move]++)-2][move]= current_player;
 
     // Check if the current player has won
     if (checkWin(board, current_player)) {
-        printf("Player %c wins!\n", current_player);
-        // return -1*currentPlayer; ////open later
+        printf("Player %c wins!\n", (current_player == 1)? 'G' : 'R');
+        return -1; ////open later
     }
 
     // Check if the board is full (tie game)
@@ -260,7 +230,7 @@ char controller(char board[][COLS], int count, char my_turn){
 
     if (isFull) {
         printf("It's a tie!\n");
-        // return -2;  ////open later
+        return -1;  ////open later
     }
 
     current_player = (current_player == 1)? 2 : 1;
@@ -269,6 +239,18 @@ char controller(char board[][COLS], int count, char my_turn){
 }
 
 
+
+void makeSockNonBlocking(int sockfd){
+    int flags = fcntl(sockfd, F_GETFL, 0);
+    if (flags == -1) {
+        perror("fcntl");
+        exit(1);
+    }
+    if (fcntl(sockfd, F_SETFL, flags | O_NONBLOCK) == -1) {
+        perror("fcntl");
+        exit(1);
+    }
+}
 
 
 int main(int argc, char* argv[]){
@@ -294,44 +276,86 @@ int main(int argc, char* argv[]){
         exit(1);
     }
     init_connection(client_socket);
+    makeSockNonBlocking(client_socket);
 
-    char buffer[100];
-    bzero(buffer, 100);
-    sprintf(buffer, "connect4 %s %s", argv[1], argv[2]);
+    char my_turn = (argv[1][0]=='c')? 1 : 2;
+    current_player = 1;
+
+    char buffer[150];
+    bzero(buffer, 150);
+    if(argv[1][0] == 'c'){
+        char state[100];
+        bzero(state, 100);
+        parse_state_to_string(board, current_player, state);
+        printf("state: %s\n", state);
+        sprintf(buffer, "connect4 %s %s", argv[1], state);
+    }else if(argv[1][0] == 'j'){
+        sprintf(buffer, "connect4 %s %s", argv[1], argv[2]);
+    }
+
     send(client_socket, buffer, strlen(buffer), 0);
+    bzero(buffer, 150);
+    int tmp = -1;
+    do{
+        tmp = recv(client_socket, buffer, sizeof(buffer), 0);
+        printf("tmp: %d\n", tmp);
+        sleep(1);
+    }while(tmp < 0);
 
-    bzero(buffer, 100);
-    recv(client_socket, buffer, sizeof(buffer), 0);
+    if(argv[1][0] == 'c'){
+        printf("%s\n", buffer);
+    }else if(argv[1][0] == 'j'){
+        parse_string_to_state(buffer, board, &current_player);
+    }
 
     bool online = true;
     int count = 0;
-
-    char my_turn = (argv[1][0]=='c')? 1 : 2;
-
-    current_player = 1;    
-
-    while (current_player != -1) {
-        printf("Connect Four\n");
+    int move = -1;
+    int result = 1;
+    current_player = 1;
+    SDL_Event event;
+    bool running = true;
+    while (result > 0) {
         
+        // Process events (e.g., handle key presses, mouse events)
         drawer(renderer, current_player, tableTexture, board);
+        SDL_PollEvent(&event);
+        switch(event.type){
+            case SDL_QUIT:
+                running = false;
+                return -1;
+            case SDL_MOUSEBUTTONDOWN:
+                if(event.button.button == SDL_BUTTON_LEFT){
+                    int x, y;
+                    SDL_GetMouseState(&x,&y);
+                    printf("x:%d   y:%d\n", x, y);
+                    move  = x/100;
+                    if (y < 100 || move < 0 || move >= COLS) {
+                        printf("Invalid column\n");
+                    }
+                }
+                break;
+        }
 
-        current_player = controller(board, count, my_turn);
-        if(current_player < 0)
-            break;
+        if(current_player == ((argv[1][0]=='c')? 2 : 1)){
+            bzero(buffer, sizeof(buffer));
+            if(recv(client_socket, buffer, sizeof(buffer), 0) > 0){
+                printf("tmp: %d\nbuff: %s\n", tmp, buffer);
+                sscanf(buffer, "move: %d", &move);
+                result = controller(board, move);
+            }
+        }else{
+            if(move != -1){
+                result = controller(board, move);
+                bzero(buffer, sizeof(buffer));
+                sprintf(buffer, "move: %d", move);
+                send(client_socket, buffer, sizeof(buffer), 0);
+            }
+        }
+        move = -1;
+
     }
-
-    switch(current_player){
-        case -1:
-            printf("quitting");
-            break;
-        case -2:
-            printf("it is a tie");
-            break;
-        default:
-            //display winner
-            printf("the winner is %c\n", current_player*-1);
-    }
-
+    
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
     SDL_Quit();
