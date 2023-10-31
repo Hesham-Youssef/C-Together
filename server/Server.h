@@ -22,7 +22,7 @@ struct Server
 };
 
 
-struct Server server_constructor(
+struct Server* server_constructor(
     int domain, 
     int service, 
     int protocol,

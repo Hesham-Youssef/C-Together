@@ -59,7 +59,7 @@ void removeNode(Node** head, Node* node) {
 }
 
 // Function to remove an element from the list using room number
-void removeElement(Node** head, int target) {
+void* removeElement(Node** head, int target) {
     Node* current = *head;
 
     while (current != NULL) {
@@ -72,8 +72,9 @@ void removeElement(Node** head, int target) {
             if (current->next != NULL) {
                 current->next->prev = current->prev;
             }
+            void* data = current->data;
             free(current);
-            return; // Element removed
+            return data; // Element removed
         }
 
         current = current->next;

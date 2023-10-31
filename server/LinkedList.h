@@ -18,8 +18,9 @@ void append(Node** head, void* data);
 Node* search(Node* head, int target);
 
 // Function to remove an element from the list
-void removeElement(Node** head, int target);
+void* removeElement(Node** head, int target);
 
+///when removing the element it only compares the first int in the struct
 // Function to remove an element from the list
 void removeNode(Node** head, Node* node);
 

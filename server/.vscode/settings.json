@@ -28,6 +28,8 @@
         "lws-adopt.h": "c",
         "lws-struct.h": "c",
         "libwebsockets.h": "c",
-        "utility": "c"
+        "utility": "c",
+        "unistd.h": "c",
+        "signal.h": "c"
     }
 }

@@ -1,5 +1,4 @@
 #include <stdio.h>
-#include "Server.h"
 #include <string.h>
 #include <unistd.h>
 #include <pthread.h>
@@ -14,57 +13,47 @@
 #include <stdbool.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <semaphore.h>
+
+#include "Server.h"
+#include "LinkedList.h"
+
+// void bzero(void *s, size_t n);
+#define bzero(s, n) memset((s), 0, (n))
+// void bcopy(const void *s1, void *s2, size_t n);
+#define bcopy(s1, s2, n) memmove((s2), (s1), (n))
 
 #define CONTROLLEN CMSG_LEN(sizeof(int))
+#define MAX_APP_NAME    32
 
 // Define a structure to store name-PID mappings
-struct ProcessInfo {
+typedef struct AppInfo {
     pid_t pid;
-    char name[32];
-};
+    char name[MAX_APP_NAME];
+    int sockfd;
+}AppInfo;
 
-struct Message {
-    long mtype;
-    char mtext[100];
-};
+Node* apps = NULL;
+pthread_mutex_t apps_mutex;
+sem_t apps_sem;
 
-
-void send_msg_to_app(int socketfd, struct msghdr* msg){
-    // key_t key;
-    // int msgid;
-    // struct Message message;
-
-    // key = ftok(app_name, 'A');
-    // msgid = msgget(key, 0666 | IPC_CREAT);
-    // if (msgid == -1) {
-    //     perror("msgget");
-    //     exit(1);
-    // }
-    // //a bit dangerous because 
-    // message.mtype = 1;
-    // bzero(message.mtext, 100);
-    // memcpy(message.mtext, msg, msg_len);
-
-    // // Send the message to the queue
-    // if (msgsnd(msgid, &message, msg_len, 0) == -1) {
-    //     perror("msgsnd");
-    //     exit(1);
-    // }
-    // printf("hello world inside send msg\n");
-
-    if (sendmsg(socketfd, msg, MSG_NOSIGNAL) != 1) {
-        perror("sendmsg");
-        exit(1);
+AppInfo* find_app_with_name(char app_name[]){
+    Node* curr = apps;
+    int name_len = strlen(app_name);
+    while(curr != NULL){
+        printf("helloo curr: %s\napp_name: %s\n", ((AppInfo*)(curr->data))->name, app_name);
+        if(strcmp(((AppInfo*)(curr->data))->name, app_name) == 0){
+            printf("found curr: %s\napp_name: %s\n", ((AppInfo*)(curr->data))->name, app_name);
+            return ((AppInfo*)(curr->data));
+        }
+        curr = curr->next;
     }
-
-    // Remove the message queue
-    // msgctl(msgid, IPC_RMID, NULL);
+    return NULL;
 }
 
 
 
-
-int create_app_handler(char* app_name, int client_sockfd){
+AppInfo* create_app_handler(char* app_name, int client_sockfd){
     // printf("hello world inside create\n");
     int sockfd[2];
     if (socketpair(AF_UNIX, SOCK_STREAM, 0, sockfd) < 0) {
@@ -98,20 +87,19 @@ int create_app_handler(char* app_name, int client_sockfd){
         }
     } else {
         close(sockfd[1]);
+        AppInfo* app = calloc(1, sizeof(AppInfo)); //check if successful
+        strcpy(app->name, app_name);
+        app->pid = child_pid;
+        app->sockfd = sockfd[0];
 
-        return sockfd[0];
-        //// handle child exit signal
-        // int status;
-        // wait(&status);
-        // printf("Parent Process: Child exited with status %d\n", WEXITSTATUS(status));
+        return app;
     }
 }
 
 
 
 void launch(struct Server* server){
-    struct ProcessInfo processes[100];
-    char buffer[3000];
+    // struct ProcessInfo processes[100];
     int address_length = sizeof(server->address);
     int count = 0;
 
@@ -140,72 +128,115 @@ void launch(struct Server* server){
     cmptr->cmsg_level = SOL_SOCKET;
     cmptr->cmsg_type = SCM_RIGHTS;
 
-    int un_socket = -1;
+    AppInfo* currApp = NULL;
     int offset;
-    char app_name[32];
+    char app_name[MAX_APP_NAME];
+    int new_socket;
     while(1){    
         printf("===== waiting for connection =====\n");
-        bzero(buffer, 3000);
-        int new_socket = accept(server->socket, (struct sockaddr*)&server->address, (socklen_t*)&address_length);
-
+        currApp = NULL;
+        new_socket = accept(server->socket, (struct sockaddr*)&server->address, (socklen_t*)&address_length);
+        
         offset = 0;
-        bzero(app_name, 32);
-        while((offset < 50)){
+        bzero(app_name, MAX_APP_NAME);
+        while((offset < MAX_APP_NAME)){
             read(new_socket, app_name+offset, 1);
-            // printf("%c %d %d\n", buffer[offset], buffer[offset], offset);
             if(app_name[offset] == ' '){
                 app_name[offset] = 0;
                 break;
             }
             offset++;
         }
+
+        if(offset == MAX_APP_NAME){
+            send(new_socket, "App name is too long, must be shorter than 32 chars ;()\n", 57, 0);
+            close(new_socket);
+            continue;
+        }
         printf("%s\n", app_name);
 
-        // pid_t target_pid = -1;
-        // for (int i = 0; i < 10; i++) {
-        //     if (strcmp(processes[i].name, app_name) == 0) {
-        //         target_pid = processes[i].pid;
-        //         break;
-        //     }
-        // }
-        // bzero(app_msg, 16);
-        // memcpy(app_msg, ((struct sockaddr*)&server->address)->sa_data, 16);
-
-        if(!process_created){
-            un_socket = create_app_handler(app_name, new_socket);
+        pthread_mutex_lock(&apps_mutex);
+        currApp = find_app_with_name(app_name);
+        pthread_mutex_unlock(&apps_mutex);
+        
+        if(currApp == NULL){
+            currApp = create_app_handler(app_name, new_socket);
             process_created = true;
+            pthread_mutex_lock(&apps_mutex);
+            append(&apps, currApp);
+            pthread_mutex_unlock(&apps_mutex);
+            sem_post(&apps_sem);
         }
 
         *((int *)CMSG_DATA(cmptr)) = new_socket;
-        send_msg_to_app(un_socket, &msg);
-
-        // printf("hello world after send msg\n");
+        
+        if (sendmsg(currApp->sockfd, &msg, MSG_NOSIGNAL) != 1) {
+            ///kill child (to be done)
+            kill(currApp->pid, SIGTERM);
+            perror("sendmsg");
+        }
 
         close(new_socket);
     }
 }
 
-void sigchld_handler(int signo) {
+
+
+void* sig_handler_thread_func(void* arg){
     int status;
     pid_t child_pid;
-
-    while ((child_pid = waitpid(-1, &status, WNOHANG)) > 0) {
+    /////////freee the app info struct
+    while (1) {
+        // pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, NULL);
+        sem_wait(&apps_sem);
+        child_pid = waitpid(-1, &status, 0);
+        printf("after waitpid \n");
+        if (child_pid == -1) {
+            perror("Wait failed");
+            exit(EXIT_FAILURE);
+        }
         if (WIFEXITED(status)) {
             printf("Child process %d exited with status %d\n", child_pid, WEXITSTATUS(status));
         } else if (WIFSIGNALED(status)) {
             printf("Child process %d terminated by signal %d\n", child_pid, WTERMSIG(status));
         }
+        pthread_mutex_lock(&apps_mutex);
+        AppInfo* appinfo = (AppInfo*)removeElement(&apps, child_pid);
+        free(appinfo);
+        pthread_mutex_unlock(&apps_mutex);
     }
+    printf("hello before thread return\n");
+    return NULL;
 }
 
 
+/// there is two leaks
+/// one associated with the thread not cleaning up  (found but yet to be fixed)
+/// the other is associated with scope              (not found yet)
+
+// void term(){
+//     printf("hello from term\n");
+//     raise(SIGTERM);
+// }
+
+
 int main(){
-    signal(SIGCHLD, sigchld_handler);
+    // signal(SIGCHLD, sigchld_handler);
+    sem_init(&apps_sem, 0, 0);
     signal(SIGPIPE, SIG_IGN);
+    // signal(SIGINT, term);
     srand(time(NULL));
+    pthread_t signal_handler_thread;
+    pthread_create(&signal_handler_thread, NULL, sig_handler_thread_func, NULL);
+    pthread_mutex_init(&apps_mutex, NULL);
     // send_msg_to_app("connect4", "resputian\n");
-    struct Server server = server_constructor(AF_INET, SOCK_STREAM, 0,
+    struct Server* server = server_constructor(AF_INET, SOCK_STREAM, 0,
         INADDR_ANY, 8080, 10, launch);
-    server.launch(&server);
+    server->launch(server);
+    pthread_cancel(signal_handler_thread);
+    pthread_join(signal_handler_thread, NULL);
+    free(server);
+    pthread_mutex_destroy(&apps_mutex);
+    sem_destroy(&apps_sem);
     return 0;
 }

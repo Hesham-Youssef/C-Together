@@ -113,6 +113,9 @@ void room_exit_handler(void* arg) {
     redisFree(thread_args->key_context);
     close(thread_args->sockfd);
     free(thread_args);
+
+    if(rooms == NULL)
+        raise(SIGTERM);
 }
 
 
@@ -443,9 +446,7 @@ int main(int argc, char** argv) {
     }while(rooms != NULL);
 
     close(my_un_socket);
-    // Remove the message queue
-    // msgctl(msgid, IPC_RMID, NULL);
-    
+    pthread_mutex_destroy(&rooms_mutex);
     printf("exiting app handler %s\n", argv[1]);
     printList(rooms);
 
