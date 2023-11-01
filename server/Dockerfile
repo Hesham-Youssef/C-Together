@@ -2,7 +2,7 @@
 FROM debian:bullseye-slim
 
 # Install any necessary dependencies (e.g., gcc, make, libc6-dev)
-RUN apt-get update && apt-get install -y gcc make libc6-dev
+RUN apt-get update && apt-get install -y gcc make libc6-dev libhiredis-dev libevent-dev
 
 # Create a directory in the container to hold your application's source code
 WORKDIR /app

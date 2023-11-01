@@ -9,6 +9,6 @@ app_handler: app_handler.c LinkedList.c
 	$(CC) -o app_handler app_handler.c LinkedList.c -lpthread -lhiredis -levent
 
 clean:
-	rm -f server
+	rm -f main
 	rm -f app_handler
 
