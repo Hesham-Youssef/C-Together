@@ -34,8 +34,6 @@ typedef struct AppInfo {
 }AppInfo;
 
 Node* apps = NULL;
-pthread_mutex_t apps_mutex;
-sem_t apps_sem;
 
 AppInfo* find_app_with_name(char app_name[]){
     Node* curr = apps;
@@ -96,6 +94,21 @@ AppInfo* create_app_handler(char* app_name, int client_sockfd){
     }
 }
 
+void signal_handler(){
+    int status;
+    pid_t child_pid;
+    while ((child_pid = waitpid(-1, &status, WNOHANG)) > 0) {
+        printf("after waitpid \n");
+        if (WIFEXITED(status)) {
+            printf("Child process %d exited with status %d\n", child_pid, WEXITSTATUS(status));
+        } else if (WIFSIGNALED(status)) {
+            printf("Child process %d terminated by signal %d\n", child_pid, WTERMSIG(status));
+        }
+        AppInfo* appinfo = (AppInfo*)removeElement(&apps, child_pid);
+        free(appinfo);
+    }
+    printf("hello before thread return\n");
+}
 
 
 void launch(struct Server* server){
@@ -132,11 +145,31 @@ void launch(struct Server* server){
     int offset;
     char app_name[MAX_APP_NAME];
     int new_socket;
+
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = signal_handler;
+    sigaction(SIGCHLD, &sa, NULL);
+
+    sigset_t mask;
+    sigemptyset(&mask);
+    sigaddset(&mask, SIGCHLD);
+
+    sigprocmask(SIG_BLOCK, &mask, NULL);
+    
+    sigset_t pending_signals;
+
     while(1){    
         printf("===== waiting for connection =====\n");
         currApp = NULL;
         new_socket = accept(server->socket, (struct sockaddr*)&server->address, (socklen_t*)&address_length);
         
+        sigpending(&pending_signals);
+        if (sigismember(&pending_signals, SIGCHLD)) {
+            printf("SIGINT is pending\n");
+            signal_handler();
+        }
+
         offset = 0;
         bzero(app_name, MAX_APP_NAME);
         while((offset < MAX_APP_NAME)){
@@ -155,88 +188,49 @@ void launch(struct Server* server){
         }
         printf("%s\n", app_name);
 
-        pthread_mutex_lock(&apps_mutex);
         currApp = find_app_with_name(app_name);
-        pthread_mutex_unlock(&apps_mutex);
         
         if(currApp == NULL){
             currApp = create_app_handler(app_name, new_socket);
             process_created = true;
-            pthread_mutex_lock(&apps_mutex);
             append(&apps, currApp);
-            pthread_mutex_unlock(&apps_mutex);
-            sem_post(&apps_sem);
         }
 
         *((int *)CMSG_DATA(cmptr)) = new_socket;
         
         if (sendmsg(currApp->sockfd, &msg, MSG_NOSIGNAL) != 1) {
             ///kill child (to be done)
-            kill(currApp->pid, SIGTERM);
-            perror("sendmsg");
+            // kill(currApp->pid, SIGTERM);
+            // perror("sendmsg");
+
+            //there is a chance that the process just turned off
+            send(new_socket, "Error occurred, try again later :(", 35, 0);
         }
 
         close(new_socket);
     }
+
+    sigprocmask(SIG_UNBLOCK, &mask, NULL);
 }
 
 
 
-void* sig_handler_thread_func(void* arg){
-    int status;
-    pid_t child_pid;
-    /////////freee the app info struct
-    while (1) {
-        // pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, NULL);
-        sem_wait(&apps_sem);
-        child_pid = waitpid(-1, &status, 0);
-        printf("after waitpid \n");
-        if (child_pid == -1) {
-            perror("Wait failed");
-            exit(EXIT_FAILURE);
-        }
-        if (WIFEXITED(status)) {
-            printf("Child process %d exited with status %d\n", child_pid, WEXITSTATUS(status));
-        } else if (WIFSIGNALED(status)) {
-            printf("Child process %d terminated by signal %d\n", child_pid, WTERMSIG(status));
-        }
-        pthread_mutex_lock(&apps_mutex);
-        AppInfo* appinfo = (AppInfo*)removeElement(&apps, child_pid);
-        free(appinfo);
-        pthread_mutex_unlock(&apps_mutex);
-    }
-    printf("hello before thread return\n");
-    return NULL;
-}
+
 
 
 /// there is two leaks
 /// one associated with the thread not cleaning up  (found but yet to be fixed)
 /// the other is associated with scope              (not found yet)
 
-// void term(){
-//     printf("hello from term\n");
-//     raise(SIGTERM);
-// }
-
 
 int main(){
     // signal(SIGCHLD, sigchld_handler);
-    sem_init(&apps_sem, 0, 0);
     signal(SIGPIPE, SIG_IGN);
     // signal(SIGINT, term);
     srand(time(NULL));
-    pthread_t signal_handler_thread;
-    pthread_create(&signal_handler_thread, NULL, sig_handler_thread_func, NULL);
-    pthread_mutex_init(&apps_mutex, NULL);
-    // send_msg_to_app("connect4", "resputian\n");
     struct Server* server = server_constructor(AF_INET, SOCK_STREAM, 0,
         INADDR_ANY, 8080, 10, launch);
     server->launch(server);
-    pthread_cancel(signal_handler_thread);
-    pthread_join(signal_handler_thread, NULL);
     free(server);
-    pthread_mutex_destroy(&apps_mutex);
-    sem_destroy(&apps_sem);
     return 0;
 }

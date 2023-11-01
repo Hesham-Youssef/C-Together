@@ -1,0 +1,6 @@
+.git
+.vscode
+core.*
+pub.c
+test.c
+prod.c

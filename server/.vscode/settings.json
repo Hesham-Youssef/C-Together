@@ -20,6 +20,7 @@
         "vector": "c",
         "string_view": "c",
         "string": "c",
+        "signal": "c",
         "unordered_map": "c",
         "unordered_set": "c",
         "initializer_list": "c",
@@ -30,6 +31,7 @@
         "libwebsockets.h": "c",
         "utility": "c",
         "unistd.h": "c",
-        "signal.h": "c"
+        "signal.h": "c",
+        "typeindex": "c"
     }
 }
