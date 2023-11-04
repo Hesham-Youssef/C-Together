@@ -11,9 +11,10 @@ WORKDIR /app
 COPY . .
 
 # Build your C application using the Makefile
+RUN make clean
 RUN make
 
 EXPOSE 8080
 
 # Define the command to run when the container starts
-CMD ["./main"]
+ENTRYPOINT ["./main"]

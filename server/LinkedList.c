@@ -79,6 +79,7 @@ void* removeElement(Node** head, int target) {
 
         current = current->next;
     }
+    return NULL;
 }
 
 // Function to pop the first element from the list
