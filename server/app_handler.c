@@ -22,6 +22,11 @@
 // #include "LinkedList.h"
 #include "Server.h"
 #include "LinkedList.h"
+#include "Websocket.h" 
+
+
+#define bzero(s, n) memset((s), 0, (n))
+#define bcopy(s1, s2, n) memmove((s2), (s1), (n))
 
 #define CONTROLLEN CMSG_LEN(sizeof(int))
 #define TIMEOUT 500
@@ -55,47 +60,47 @@ typedef struct Thread_args { //don't change params order
     int id;
 }Thread_args;
 
-void makeSockNonBlocking(int sockfd){
-    int flags = fcntl(sockfd, F_GETFL, 0);
-    if (flags == -1) {
-        perror("fcntl");
-        exit(1);
-    }
-    if (fcntl(sockfd, F_SETFL, flags | O_NONBLOCK) == -1) {
-        perror("fcntl");
-        exit(1);
-    }
-}
+// void makeSockNonBlocking(int sockfd){
+//     int flags = fcntl(sockfd, F_GETFL, 0);
+//     if (flags == -1) {
+//         perror("fcntl");
+//         exit(1);
+//     }
+//     if (fcntl(sockfd, F_SETFL, flags | O_NONBLOCK) == -1) {
+//         perror("fcntl");
+//         exit(1);
+//     }
+// }
 
-void makeSockBlocking(int sockfd){
-    int flags = fcntl(sockfd, F_GETFL, 0);
-    if (flags == -1) {
-        perror("fcntl");
-        exit(1);
-    }
-    flags ^= O_NONBLOCK;
-    if (fcntl(sockfd, F_SETFL, flags | 0) == -1) {
-        perror("fcntl");
-        exit(1);
-    }
-}
+// void makeSockBlocking(int sockfd){
+//     int flags = fcntl(sockfd, F_GETFL, 0);
+//     if (flags == -1) {
+//         perror("fcntl");
+//         exit(1);
+//     }
+//     flags ^= O_NONBLOCK;
+//     if (fcntl(sockfd, F_SETFL, flags | 0) == -1) {
+//         perror("fcntl");
+//         exit(1);
+//     }
+// }
 
 
-void readNextArg(int sockfd, char buff[]){
-    // makeSockNonBlocking(sockfd);
-    int offset = 0, bytes_read;
-    while((offset < 50 && bytes_read != -1)){
-        bytes_read = recv(sockfd, buff+offset, 1, 0);
-        // printf("%c %d %d\n", buffer[offset], buffer[offset], offset);
-        if(buff[offset] == 32){
-            buff[offset] = 0;
-            break;
-        }
-        offset++;
-    }
-    printf("done reading %s\n", buff);
-    // makeSockBlocking(sockfd);
-}
+// void readNextArg(int sockfd, char buff[]){
+//     // makeSockNonBlocking(sockfd);
+//     int offset = 0, bytes_read;
+//     while((offset < 50 && bytes_read != -1)){
+//         bytes_read = recv(sockfd, buff+offset, 1, 0);
+//         // printf("%c %d %d\n", buffer[offset], buffer[offset], offset);
+//         if(buff[offset] == 32){
+//             buff[offset] = 0;
+//             break;
+//         }
+//         offset++;
+//     }
+//     printf("done reading %s\n", buff);
+//     // makeSockBlocking(sockfd);
+// }
 
 
 void room_exit_handler(void* arg) {
@@ -267,6 +272,8 @@ void* room_handler(void* arg){
     Thread_args* thread_args = (Thread_args*)arg;
     pthread_cleanup_push(room_exit_handler, thread_args);
 
+    ////handle handshake
+
     connect_to_redis(&thread_args->sub_context);
     if (thread_args->sub_context == NULL) {
         perror("redis connect");
@@ -377,7 +384,7 @@ int main(int argc, char** argv) {
     struct cmsghdr *cmptr;
 
     iov.iov_base = &dummy;
-    iov.iov_len = 1;
+    iov.iov_len = 32;
     msg.msg_iov = &iov;
     msg.msg_iovlen = 1;
     msg.msg_name = NULL;
@@ -385,7 +392,6 @@ int main(int argc, char** argv) {
     msg.msg_control = fd_buf;
     msg.msg_controllen = CONTROLLEN;
 
-    int count = 0;
     bool created = false;
 
     char command[50];
@@ -394,8 +400,8 @@ int main(int argc, char** argv) {
     char room_number_str[10];
     bzero(room_number_str, 10);
 
-    redisContext *context;
-    connect_to_redis(&context);
+    // redisContext *context;
+    // connect_to_redis(&context);
     int room_number;
     int offset = 0;
     do{
@@ -410,39 +416,43 @@ int main(int argc, char** argv) {
         }
         received_fd = *((int *)CMSG_DATA(cmptr));
         
-        makeSockNonBlocking(received_fd);
-        readNextArg(received_fd, command);
+        printf("Received message: %d %s\n", (int)iov.iov_len, (char *)iov.iov_base);
+
+
+        // makeSockNonBlocking(received_fd);
+        // readNextArg(received_fd, command);
         
-        switch (command[0]){
+        switch (((char*)iov.iov_base)[0]){
             case 'c':
                 room_number = rand() % 9000 + 1000;
-                printf("room number: %d\n", room_number);
-                create_user_thread(received_fd, room_number, true);
+                printf("room number c: %d\n", room_number);
+                // create_user_thread(received_fd, room_number, true);
                 break;
             case 'j':
-                readNextArg(received_fd, room_number_str);
-                room_number = atoi(room_number_str);
-                if(room_exists(&context, room_number)){
-                    printf("adding you\n");
-                    create_user_thread(received_fd, room_number, false);
-                }else{
-                    if (send(received_fd, "Room doesn't exist :(", 22, 0) == -1) {
-                        perror("send");
-                    }
-                    close(received_fd);
-                }
+                // readNextArg(received_fd, room_number_str);
+                room_number = atoi(iov.iov_base + 2);
+                printf("room number j: %d\n", room_number);
+                // if(room_exists(&context, room_number)){
+                //     printf("adding you\n");
+                //     create_user_thread(received_fd, room_number, false);
+                // }else{
+                //     if (send(received_fd, "Room doesn't exist :(", 22, 0) == -1) {
+                //         perror("send");
+                //     }
+                //     close(received_fd);
+                // }
                 /// check if such room exists in redis first
                 break;
             default:
-                if (send(received_fd, "Not a valid command (either c to create or j to join) >:(", 22, 0) == -1) {
-                    perror("send");
-                    return 1;
-                }
-                close(received_fd);
+                // if (send(received_fd, "Not a valid command (either c to create or j to join) >:(", 22, 0) == -1) {
+                //     perror("send");
+                //     return 1;
+                // }
+                // close(received_fd);
                 break;
         }
 
-        count++;
+        close(received_fd);
     }while(rooms != NULL);
 
     close(my_un_socket);

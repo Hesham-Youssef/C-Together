@@ -15,6 +15,10 @@
 #include <sys/un.h>
 #include <semaphore.h>
 
+#include <signal.h>           /* Definition of SIG_* constants */
+#include <sys/syscall.h>      /* Definition of SYS_* constants */
+#include <unistd.h>
+
 #include "Server.h"
 #include "LinkedList.h"
 
@@ -24,7 +28,9 @@
 #define bcopy(s1, s2, n) memmove((s2), (s1), (n))
 
 #define CONTROLLEN CMSG_LEN(sizeof(int))
-#define MAX_APP_NAME    32
+#define MAX_APP_NAME    50
+#define MAX_BUFFER_LEN    100
+#define MAX_MSG_LEN     32
 
 // Define a structure to store name-PID mappings
 typedef struct AppInfo {
@@ -121,14 +127,14 @@ void launch(struct Server* server){
     // char app_msg[100];
 
 
-    struct msghdr msg;
+    struct msghdr msg = {0};
     struct iovec iov;
-    char dummy = 'D'; ////use this to send to app_handler whether we join or create
+
     char control[CONTROLLEN];
     struct cmsghdr *cmptr;
 
-    iov.iov_base = &dummy;
-    iov.iov_len = 1;
+    iov.iov_len = 32;
+
     msg.msg_iov = &iov;
     msg.msg_iovlen = 1;
     msg.msg_name = NULL;
@@ -143,7 +149,10 @@ void launch(struct Server* server){
 
     AppInfo* currApp = NULL;
     int offset;
+    char buffer[MAX_BUFFER_LEN];
     char app_name[MAX_APP_NAME];
+    char params[MAX_MSG_LEN];
+
     int new_socket;
 
     struct sigaction sa;
@@ -166,30 +175,32 @@ void launch(struct Server* server){
         
         sigpending(&pending_signals);
         if (sigismember(&pending_signals, SIGCHLD)) {
-            printf("SIGINT is pending\n");
+            printf("SIGCHLD is pending\n");
             signal_handler();
         }
 
         offset = 0;
-        bzero(app_name, MAX_APP_NAME);
-        while((offset < MAX_APP_NAME)){
-            read(new_socket, app_name+offset, 1);
-            if(app_name[offset] == ' '){
-                app_name[offset] = 0;
-                break;
-            }
-            offset++;
-        }
-
+        memset(buffer, 0, MAX_BUFFER_LEN);
+        int read_len = 0;
+        do{
+            read_len = recv(new_socket, buffer+offset, 1, 0);
+        }while((read_len > 0) && (offset < MAX_BUFFER_LEN) && (buffer[offset++] != '\n'));
+        buffer[offset] = 0;
+  
         if(offset == MAX_APP_NAME){
-            send(new_socket, "App name is too long, must be shorter than 32 chars ;()\n", 57, 0);
+            // send(new_socket, "App name is too long, must be shorter than 32 chars ;()\n", 57, 0);
             close(new_socket);
             continue;
         }
-        printf("%s\n", app_name);
+        
+        memset(app_name, 0, MAX_APP_NAME);
+        memset(params, 0, MAX_MSG_LEN);
+        sscanf(buffer, "GET /%[^/]/%s HTTP", app_name, params);
+
+        printf("app_name: %s\n", app_name);
+        printf("params: %s\n", params);
 
         currApp = find_app_with_name(app_name);
-        
         if(currApp == NULL){
             currApp = create_app_handler(app_name, new_socket);
             process_created = true;
@@ -197,6 +208,7 @@ void launch(struct Server* server){
         }
 
         *((int *)CMSG_DATA(cmptr)) = new_socket;
+        iov.iov_base = params;
         
         if (sendmsg(currApp->sockfd, &msg, MSG_NOSIGNAL) != 1) {
             ///kill child (to be done)
@@ -204,7 +216,7 @@ void launch(struct Server* server){
             // perror("sendmsg");
 
             //there is a chance that the process just turned off
-            send(new_socket, "Error occurred, try again later :(", 35, 0);
+            // send(new_socket, "Error occurred, try again later :(", 35, 0);  // jjjjjj
         }
 
         close(new_socket);
@@ -212,8 +224,6 @@ void launch(struct Server* server){
 
     sigprocmask(SIG_UNBLOCK, &mask, NULL);
 }
-
-
 
 
 

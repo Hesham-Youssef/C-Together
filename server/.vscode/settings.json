@@ -32,6 +32,13 @@
         "utility": "c",
         "unistd.h": "c",
         "signal.h": "c",
-        "typeindex": "c"
-    }
+        "typeindex": "c",
+        "evp.h": "c",
+        "bio.h": "c",
+        "server.h": "c"
+    },
+    "C_Cpp.codeAnalysis.clangTidy.checks.disabled": [
+        "clang-diagnostic-implicit-function-declaration",
+        "clang-diagnostic-implicit-function-declaration"
+    ]
 }

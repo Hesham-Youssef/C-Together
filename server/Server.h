@@ -4,6 +4,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 
+typedef __u_long u_long;
 
 struct Server
 {
