@@ -9,6 +9,7 @@
 #include <openssl/buffer.h>
 #include <unistd.h>
 #include <arpa/inet.h>
+#include <inttypes.h>
 
 #define GUID "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 #define GUID_LEN 37
@@ -199,7 +200,41 @@ int handle_ping(int sockfd, char* frame){
 
 
 
+int send_websocket_message(int sockfd, const char *message, size_t length) {
+    if (length > 0xFFFF) {
+        perror("Message too long");
+        return -1;
+    }
 
+    // Calculate total frame size
+    size_t frame_size = 2 + (length < 126 ? 0 : 2) + length;
+
+    // Allocate memory for the frame
+    char *frame = (char *)malloc(frame_size);
+    if (frame == NULL) {
+        perror("malloc");
+        return -1;
+    }
+
+    frame[0] = 0x81; // Fin bit: 1 (final fragment), RSV1-3: 000, Opcode: 1 (text frame)
+    frame[1] = (length < 126) ? length : 126;
+    
+    // Add extended payload length if needed
+    if (length >= 126) {
+        frame[2] = (length >> 8) & 0xFF;
+        frame[3] = length & 0xFF;
+    }
+
+    memcpy(frame + (length < 126 ? 2 : 4), message, length);
+
+    int ret = send(sockfd, frame, frame_size, 0);
+    if (ret == -1) {
+        perror("send");
+    }
+
+    free(frame);
+    return ret;
+}
 
 
 

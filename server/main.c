@@ -19,6 +19,7 @@
 #include <sys/syscall.h>      /* Definition of SYS_* constants */
 #include <unistd.h>
 
+#include "Websocket.h"
 #include "Server.h"
 #include "LinkedList.h"
 
@@ -129,12 +130,12 @@ void launch(struct Server* server){
 
     struct msghdr msg = {0};
     struct iovec iov;
-
+    char params[MAX_MSG_LEN];
     char control[CONTROLLEN];
     struct cmsghdr *cmptr;
 
     iov.iov_len = 32;
-
+    iov.iov_base = &params;
     msg.msg_iov = &iov;
     msg.msg_iovlen = 1;
     msg.msg_name = NULL;
@@ -151,7 +152,6 @@ void launch(struct Server* server){
     int offset;
     char buffer[MAX_BUFFER_LEN];
     char app_name[MAX_APP_NAME];
-    char params[MAX_MSG_LEN];
 
     int new_socket;
 
@@ -208,15 +208,15 @@ void launch(struct Server* server){
         }
 
         *((int *)CMSG_DATA(cmptr)) = new_socket;
-        iov.iov_base = params;
-        
+
+
         if (sendmsg(currApp->sockfd, &msg, MSG_NOSIGNAL) != 1) {
             ///kill child (to be done)
             // kill(currApp->pid, SIGTERM);
             // perror("sendmsg");
-
             //there is a chance that the process just turned off
-            // send(new_socket, "Error occurred, try again later :(", 35, 0);  // jjjjjj
+
+            // send_websocket_close(new_socket, "Error occurred, try again later :(", 35);
         }
 
         close(new_socket);

@@ -1,6 +1,9 @@
 #ifndef Websocket_h
 #define Websocket_h
 
+#include <inttypes.h>
+#include <stddef.h>
+
 #define WS_OPCODE_CONTINUATION 0x0
 #define WS_OPCODE_TEXT 0x1
 #define WS_OPCODE_BINARY 0x2
@@ -15,5 +18,6 @@ int handle_ping(int sockfd, char* frame);
 
 //TO DO: implement a ws_send_msg(char* msg, int msg_len)
 int ws_send_msg(char* msg, int msg_len);
+int send_websocket_message(int sockfd, const char *message, size_t length);
 
 #endif

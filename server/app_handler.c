@@ -270,80 +270,80 @@ void socketEventCallback(evutil_socket_t fd, short events, void* arg) {
 ///////////// next implement the room loop
 void* room_handler(void* arg){
     Thread_args* thread_args = (Thread_args*)arg;
-    pthread_cleanup_push(room_exit_handler, thread_args);
+    // pthread_cleanup_push(room_exit_handler, thread_args);
 
-    ////handle handshake
+    // connect_to_redis(&thread_args->sub_context);
+    // if (thread_args->sub_context == NULL) {
+    //     perror("redis connect");
+    //     pthread_exit(NULL);
+    // }
 
-    connect_to_redis(&thread_args->sub_context);
-    if (thread_args->sub_context == NULL) {
-        perror("redis connect");
-        pthread_exit(NULL);
-    }
+    // connect_to_redis(&thread_args->pub_context);
+    // if (thread_args->pub_context == NULL) {
+    //     perror("redis connect");
+    //     pthread_exit(NULL);
+    // }
 
-    connect_to_redis(&thread_args->pub_context);
-    if (thread_args->pub_context == NULL) {
-        perror("redis connect");
-        pthread_exit(NULL);
-    }
-
-    connect_to_redis(&thread_args->key_context);
-    if (thread_args->key_context == NULL) {
-        perror("redis connect");
-        pthread_exit(NULL);
-    }
+    // connect_to_redis(&thread_args->key_context);
+    // if (thread_args->key_context == NULL) {
+    //     perror("redis connect");
+    //     pthread_exit(NULL);
+    // }
 
     if(thread_args->creator){
-        save_state_to_redis(thread_args);
-        if(thread_args->reply == NULL){
-            return NULL;
-        }
+        // save_state_to_redis(thread_args);
+        // if(thread_args->reply == NULL){
+        //     return NULL;
+        // }
         char message[24 + ROOM_NUMBER_LENGTH]; // Adjust the size as needed
         bzero(message, 24 + ROOM_NUMBER_LENGTH);
         snprintf(message, sizeof(message), "Your room number: %d", thread_args->room_num);
-        int bytes_written = send(thread_args->sockfd, message, strlen(message), 0);
-        freeReplyObject(thread_args->reply);
+        int bytes_written = send_websocket_message(thread_args->sockfd, message, strlen(message));
+        // int bytes_written = send(thread_args->sockfd, message, strlen(message), 0);
+        // freeReplyObject(thread_args->reply);
         if(bytes_written == 0){
             return NULL;
         }
     }else{
-        get_state_from_redis(thread_args);
-        if(thread_args->reply == NULL){
-            return NULL;
-        }
-        int bytes_written = send(thread_args->sockfd, thread_args->reply->str+1, strlen(thread_args->reply->str+1)-1, 0);
-        freeReplyObject(thread_args->reply);
-        if(bytes_written == 0){
-            return NULL;
-        }
+        // get_state_from_redis(thread_args);
+        // if(thread_args->reply == NULL){
+        //     return NULL;
+        // }
+        // int bytes_written = send(thread_args->sockfd, thread_args->reply->str+1, strlen(thread_args->reply->str+1)-1, 0);
+        // freeReplyObject(thread_args->reply);
+        // if(bytes_written <= 0){
+        //     return NULL;
+        // }
     }
 
-    subscribe_to_redis(thread_args);
-    if (thread_args->reply == NULL) {
-        perror("redis subscribe");
-        pthread_exit(NULL);
-    }
+    // subscribe_to_redis(thread_args);
+    // if (thread_args->reply == NULL) {
+    //     perror("redis subscribe");
+    //     pthread_exit(NULL);
+    // }
 
-    printf("Subscribed to the %d channel. Listening for messages...\n", thread_args->room_num);
-    // Initialize libevent
-    thread_args->base = event_base_new();
-    // Create events for Redis and socket
-    struct event* redisEvent = event_new(thread_args->base, thread_args->sub_context->fd, EV_READ | EV_PERSIST, redisEventCallback, thread_args);
-    struct event* socketEvent = event_new(thread_args->base, thread_args->sockfd, EV_READ | EV_PERSIST, socketEventCallback, thread_args);
+    // printf("Subscribed to the %d channel. Listening for messages...\n", thread_args->room_num);
+    // // Initialize libevent
+    // thread_args->base = event_base_new();
+    // // Create events for Redis and socket
+    // struct event* redisEvent = event_new(thread_args->base, thread_args->sub_context->fd, EV_READ | EV_PERSIST, redisEventCallback, thread_args);
+    // struct event* socketEvent = event_new(thread_args->base, thread_args->sockfd, EV_READ | EV_PERSIST, socketEventCallback, thread_args);
 
-    event_add(redisEvent, NULL);
-    event_add(socketEvent, NULL);
+    // event_add(redisEvent, NULL);
+    // event_add(socketEvent, NULL);
 
-    struct timeval timeout = {1800,0};
-    event_base_loopexit(thread_args->base, &timeout);
+    // struct timeval timeout = {1800,0};
+    // event_base_loopexit(thread_args->base, &timeout);
 
-    if (event_base_dispatch(thread_args->base) == -1) {
-        perror("event_base_dispatch");
-        pthread_exit(NULL);
-    }
-    // Cleanup and close resources as needed
-    event_free(redisEvent);
-    event_free(socketEvent);
-    pthread_cleanup_pop(1);
+    // if (event_base_dispatch(thread_args->base) == -1) {
+    //     perror("event_base_dispatch");
+    //     pthread_exit(NULL);
+    // }
+    // // Cleanup and close resources as needed
+    // event_free(redisEvent);
+    // event_free(socketEvent);
+    // pthread_cleanup_pop(1);
+    close(thread_args->sockfd);
     pthread_exit(NULL);
 }
 
@@ -379,11 +379,13 @@ int main(int argc, char** argv) {
     int received_fd;
     struct msghdr msg;
     struct iovec iov;
-    char dummy;
+    char params[32];
     char fd_buf[CONTROLLEN];
+    memset(fd_buf, 0, CONTROLLEN);
+
     struct cmsghdr *cmptr;
 
-    iov.iov_base = &dummy;
+    iov.iov_base = &params;
     iov.iov_len = 32;
     msg.msg_iov = &iov;
     msg.msg_iovlen = 1;
@@ -394,14 +396,11 @@ int main(int argc, char** argv) {
 
     bool created = false;
 
-    char command[50];
-    bzero(command, 50);
+    char buffer[1024] = {0};
 
-    char room_number_str[10];
-    bzero(room_number_str, 10);
 
-    // redisContext *context;
-    // connect_to_redis(&context);
+    redisContext *context;
+    connect_to_redis(&context);
     int room_number;
     int offset = 0;
     do{
@@ -410,49 +409,56 @@ int main(int argc, char** argv) {
             exit(1);
         }
         cmptr = CMSG_FIRSTHDR(&msg);
+        
         if (cmptr == NULL || cmptr->cmsg_len != CONTROLLEN) {
             perror("bad control message");
             exit(1);
+            
         }
+        
         received_fd = *((int *)CMSG_DATA(cmptr));
-        
-        printf("Received message: %d %s\n", (int)iov.iov_len, (char *)iov.iov_base);
+        printf("read params is %s\n", params);
+
+        memset(buffer, 0, 1024);
+        recv(received_fd, buffer, 1024, 0);
+        if(handle_handshake(received_fd, buffer) > 0){
+            perror("handshake failed");
+            close(received_fd);
+            continue;
+        }
 
 
-        // makeSockNonBlocking(received_fd);
-        // readNextArg(received_fd, command);
         
-        switch (((char*)iov.iov_base)[0]){
+        switch (params[0]){
             case 'c':
                 room_number = rand() % 9000 + 1000;
                 printf("room number c: %d\n", room_number);
-                // create_user_thread(received_fd, room_number, true);
+                create_user_thread(received_fd, room_number, true);
                 break;
             case 'j':
                 // readNextArg(received_fd, room_number_str);
-                room_number = atoi(iov.iov_base + 2);
+                room_number = atoi(params + 2);
                 printf("room number j: %d\n", room_number);
-                // if(room_exists(&context, room_number)){
-                //     printf("adding you\n");
-                //     create_user_thread(received_fd, room_number, false);
-                // }else{
-                //     if (send(received_fd, "Room doesn't exist :(", 22, 0) == -1) {
-                //         perror("send");
-                //     }
-                //     close(received_fd);
-                // }
+                if(room_exists(&context, room_number)){
+                    printf("adding you\n");
+                    create_user_thread(received_fd, room_number, false);
+                }else{
+                    if (send_websocket_message(received_fd, "Room doesn't exist :(", 22) == -1) {
+                        perror("send");
+                    }
+                    close(received_fd);
+                }
                 /// check if such room exists in redis first
                 break;
             default:
-                // if (send(received_fd, "Not a valid command (either c to create or j to join) >:(", 22, 0) == -1) {
-                //     perror("send");
-                //     return 1;
-                // }
-                // close(received_fd);
+                if (send_websocket_message(received_fd, "Not a valid command (either c to create or j to join) >:(", 22) == -1) {
+                    perror("send");
+                    return 1;
+                }
+                close(received_fd);
                 break;
         }
 
-        close(received_fd);
     }while(rooms != NULL);
 
     close(my_un_socket);

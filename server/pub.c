@@ -82,6 +82,7 @@ void* connection_handler(void* arg){
         data_length = recv(thread_args->sockfd, buffer, sizeof(buffer), 0);
 
         res = handle_frame(thread_args->sockfd, buffer, data_length);
+        send_websocket_message(thread_args->sockfd, "hellooo fromm serverrr\n", 24);
 
     }while(res != -1);
 

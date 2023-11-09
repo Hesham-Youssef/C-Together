@@ -35,7 +35,9 @@
         "typeindex": "c",
         "evp.h": "c",
         "bio.h": "c",
-        "server.h": "c"
+        "server.h": "c",
+        "websocket.h": "c",
+        "inttypes.h": "c"
     },
     "C_Cpp.codeAnalysis.clangTidy.checks.disabled": [
         "clang-diagnostic-implicit-function-declaration",
