@@ -270,25 +270,25 @@ void socketEventCallback(evutil_socket_t fd, short events, void* arg) {
 ///////////// next implement the room loop
 void* room_handler(void* arg){
     Thread_args* thread_args = (Thread_args*)arg;
-    // pthread_cleanup_push(room_exit_handler, thread_args);
+    pthread_cleanup_push(room_exit_handler, thread_args);
 
-    // connect_to_redis(&thread_args->sub_context);
-    // if (thread_args->sub_context == NULL) {
-    //     perror("redis connect");
-    //     pthread_exit(NULL);
-    // }
+    connect_to_redis(&thread_args->sub_context);
+    if (thread_args->sub_context == NULL) {
+        perror("redis connect");
+        pthread_exit(NULL);
+    }
 
-    // connect_to_redis(&thread_args->pub_context);
-    // if (thread_args->pub_context == NULL) {
-    //     perror("redis connect");
-    //     pthread_exit(NULL);
-    // }
+    connect_to_redis(&thread_args->pub_context);
+    if (thread_args->pub_context == NULL) {
+        perror("redis connect");
+        pthread_exit(NULL);
+    }
 
-    // connect_to_redis(&thread_args->key_context);
-    // if (thread_args->key_context == NULL) {
-    //     perror("redis connect");
-    //     pthread_exit(NULL);
-    // }
+    connect_to_redis(&thread_args->key_context);
+    if (thread_args->key_context == NULL) {
+        perror("redis connect");
+        pthread_exit(NULL);
+    }
 
     if(thread_args->creator){
         // save_state_to_redis(thread_args);
@@ -309,41 +309,41 @@ void* room_handler(void* arg){
         // if(thread_args->reply == NULL){
         //     return NULL;
         // }
-        // int bytes_written = send(thread_args->sockfd, thread_args->reply->str+1, strlen(thread_args->reply->str+1)-1, 0);
+        int bytes_written = send_websocket_message(thread_args->sockfd, "Joined room successfully", 25);
         // freeReplyObject(thread_args->reply);
-        // if(bytes_written <= 0){
-        //     return NULL;
-        // }
+        if(bytes_written <= 0){
+            return NULL;
+        }
     }
 
-    // subscribe_to_redis(thread_args);
-    // if (thread_args->reply == NULL) {
-    //     perror("redis subscribe");
-    //     pthread_exit(NULL);
-    // }
+    subscribe_to_redis(thread_args);
+    if (thread_args->reply == NULL) {
+        perror("redis subscribe");
+        pthread_exit(NULL);
+    }
 
-    // printf("Subscribed to the %d channel. Listening for messages...\n", thread_args->room_num);
-    // // Initialize libevent
-    // thread_args->base = event_base_new();
-    // // Create events for Redis and socket
-    // struct event* redisEvent = event_new(thread_args->base, thread_args->sub_context->fd, EV_READ | EV_PERSIST, redisEventCallback, thread_args);
-    // struct event* socketEvent = event_new(thread_args->base, thread_args->sockfd, EV_READ | EV_PERSIST, socketEventCallback, thread_args);
+    printf("Subscribed to the %d channel. Listening for messages...\n", thread_args->room_num);
+    // Initialize libevent
+    thread_args->base = event_base_new();
+    // Create events for Redis and socket
+    struct event* redisEvent = event_new(thread_args->base, thread_args->sub_context->fd, EV_READ | EV_PERSIST, redisEventCallback, thread_args);
+    struct event* socketEvent = event_new(thread_args->base, thread_args->sockfd, EV_READ | EV_PERSIST, socketEventCallback, thread_args);
 
-    // event_add(redisEvent, NULL);
-    // event_add(socketEvent, NULL);
+    event_add(redisEvent, NULL);
+    event_add(socketEvent, NULL);
 
-    // struct timeval timeout = {1800,0};
-    // event_base_loopexit(thread_args->base, &timeout);
+    struct timeval timeout = {1800,0};
+    event_base_loopexit(thread_args->base, &timeout);
 
-    // if (event_base_dispatch(thread_args->base) == -1) {
-    //     perror("event_base_dispatch");
-    //     pthread_exit(NULL);
-    // }
-    // // Cleanup and close resources as needed
-    // event_free(redisEvent);
-    // event_free(socketEvent);
-    // pthread_cleanup_pop(1);
-    close(thread_args->sockfd);
+    if (event_base_dispatch(thread_args->base) == -1) {
+        perror("event_base_dispatch");
+        pthread_exit(NULL);
+    }
+    // Cleanup and close resources as needed
+    event_free(redisEvent);
+    event_free(socketEvent);
+    pthread_cleanup_pop(1);
+    // close(thread_args->sockfd);
     pthread_exit(NULL);
 }
 
