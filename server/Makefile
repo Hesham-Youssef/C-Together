@@ -1,8 +1,8 @@
 CC = gcc
 
-all: server app_handler
+all: main app_handler
 
-server: main.c Server.c LinkedList.c Websocket.c
+main: main.c Server.c LinkedList.c Websocket.c
 	$(CC) -o main main.c Server.c LinkedList.c Websocket.c -lssl -lcrypto
 
 app_handler: app_handler.c LinkedList.c

@@ -19,5 +19,6 @@ int handle_ping(int sockfd, char* frame);
 //TO DO: implement a ws_send_msg(char* msg, int msg_len)
 int ws_send_msg(char* msg, int msg_len);
 int send_websocket_message(int sockfd, const char *message, size_t length);
+void ws_send_ping(int sockfd, char* msg, int msg_len);
 
 #endif

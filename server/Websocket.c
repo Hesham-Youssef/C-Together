@@ -237,4 +237,29 @@ int send_websocket_message(int sockfd, const char *message, size_t length) {
 }
 
 
+void ws_send_ping(int sockfd, char* msg, int msg_len){
+    // Assume that the payload length fits within 125 bytes (simplified example)
+    if (msg_len > 125) {
+        fprintf(stderr, "Payload length exceeds 125 bytes. This example supports payloads up to 125 bytes.\n");
+        return;
+    }
+
+    char* frameBuffer = calloc(2+msg_len, sizeof(char));
+
+    // Set the FIN bit and opcode for a ping frame (0x89)
+    frameBuffer[0] = 0x89;
+
+    // Set the payload length
+    frameBuffer[1] = (unsigned char)msg_len;
+
+    // Copy the payload into the frame buffer
+    memcpy(frameBuffer + 2, msg, msg_len);
+
+    send(sockfd, frameBuffer, 2+msg_len, 0);
+
+
+    free(frameBuffer);
+}
+
+
 
